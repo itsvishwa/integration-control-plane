@@ -17,7 +17,8 @@
  */
 
 import { type RouteProps, Navigate } from 'react-router';
-import { cookiePolicyUrl, loginUrl, orgRoleDetailUrl, privacyPolicyUrl, projectRoleDetailUrl, componentRoleDetailUrl, projectGroupDetailUrl, componentGroupDetailUrl, alertsSegment } from '../paths';
+import { cookiePolicyUrl, loginUrl, orgRoleDetailUrl, privacyPolicyUrl, projectRoleDetailUrl, componentRoleDetailUrl, projectGroupDetailUrl, componentGroupDetailUrl, alertsSegment, loggersSegment } from '../paths';
+import HomeRedirect from '../components/HomeRedirect';
 import OrgHomeRedirect from '../components/OrgHomeRedirect';
 import CreateUser from '../pages/CreateUser';
 import EditUser from '../pages/EditUser';
@@ -72,7 +73,7 @@ const MATRIX: Matrix = {
 };
 
 const routes: AppRoute[] = [
-  { path: '/', element: <Navigate to="/login" replace /> },
+  { path: '/', element: <HomeRedirect /> },
   // Legacy: Asgardeo/Choreo OIDC callback — preserved for future re-enablement
   { path: '/signin', element: <OIDCCallback /> },
   {
