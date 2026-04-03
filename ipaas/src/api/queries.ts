@@ -612,6 +612,7 @@ export interface GqlRepository {
   bitbucketServerUrl?: string;
   serverUrl?: string;
   projectApp?: string;
+  treeUrl?: string;
 }
 
 export interface GqlCommit {
