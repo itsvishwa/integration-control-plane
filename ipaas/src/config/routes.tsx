@@ -63,7 +63,7 @@ export interface AppRoute extends Omit<RouteProps, 'children'> {
 }
 
 const MATRIX: Matrix = {
-  overview: { segment: '', pages: { organizations: Projects, projects: Project, components: Component } },
+  overview: { segment: 'overview', pages: { organizations: Projects, projects: Project, components: Component } },
   logs: { segment: 'logs', pages: { projects: RuntimeLogsProject, components: RuntimeLogsIntegration } },
   alerts: { segment: alertsSegment, pages: { components: Alerts } },
   metrics: { segment: 'metrics', pages: { projects: Metrics, components: Metrics } },
@@ -102,7 +102,6 @@ const routes: AppRoute[] = [
               ...generateMatrixRoutes(MATRIX),
               { path: 'organizations/:orgHandler/home', element: createElement(withScope(Projects, ['organizations'])) },
               { path: 'organizations/:orgHandler/projects/:projectHandler/home', element: createElement(withScope(Project, ['projects'])) },
-              { path: 'organizations/:orgHandler/projects/:projectHandler/components/:componentHandler/overview', element: createElement(withScope(Component, ['components'])) },
               { path: 'organizations/:orgHandler/projects/new', element: createElement(withScope(CreateProject, ['organizations'])) },
               { path: 'organizations/:orgHandler/projects/:projectHandler/components/new', element: createElement(withScope(CreateComponent, ['projects'])) },
               { path: 'organizations/:orgHandler/environments/new', element: createElement(withScope(CreateEnvironment, ['organizations'])) },
