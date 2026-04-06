@@ -625,6 +625,8 @@ export function useTriggerExecution() {
       ),
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ['executions', input.componentId, input.environment] });
+      qc.invalidateQueries({ queryKey: ['resourceTreeExecutions', input.componentId, input.environment] });
+      qc.invalidateQueries({ queryKey: ['resourceTree', input.componentId, input.environment] });
     },
   });
 }
