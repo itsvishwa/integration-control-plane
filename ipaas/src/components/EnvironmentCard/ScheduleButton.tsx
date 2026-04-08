@@ -21,33 +21,41 @@ import { CalendarClock, ChevronDown } from '@wso2/oxygen-ui-icons-react';
 import { useRef, useState } from 'react';
 import Authorized from '../Authorized';
 import { Permissions } from '../../constants/permissions';
-import { useStopDeployment } from '../../api/mutations';
+import { useUpsertSchedule } from '../../api/mutations';
 import ScheduleDialog from './ScheduleDialog';
 
 export interface ScheduleButtonProps {
   envId: string;
   envName: string;
   componentId: string;
-  orgHandler: string;
-  releaseId: string;
-  versionId: string;
-  deploymentPipelineId: string;
+  projectId: string;
   hasSchedule: boolean;
+  cronExpression?: string;
   disabled?: boolean;
   onSaveSuccess?: () => void;
   onSaveError?: (msg: string) => void;
   onStopSuccess?: () => void;
 }
 
-export default function ScheduleButton({ hasSchedule, disabled, onSaveSuccess, onSaveError, onStopSuccess, ...dialogProps }: ScheduleButtonProps) {
+export default function ScheduleButton({ hasSchedule, cronExpression, disabled, onSaveSuccess, onSaveError, onStopSuccess, ...dialogProps }: ScheduleButtonProps) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const splitButtonRef = useRef<HTMLDivElement>(null);
-  const stopDeployment = useStopDeployment();
+  const upsertSchedule = useUpsertSchedule();
 
   const handleStopSchedule = () => {
+    if (!cronExpression) return;
     setSplitOpen(false);
-    stopDeployment.mutate({ orgHandler: dialogProps.orgHandler, componentId: dialogProps.componentId, releaseId: dialogProps.releaseId }, { onSuccess: () => onStopSuccess?.() });
+    upsertSchedule.mutate(
+      {
+        componentId: dialogProps.componentId,
+        projectId: dialogProps.projectId,
+        environment: dialogProps.envId,
+        cronExpression,
+        state: 'Undeploy',
+      },
+      { onSuccess: () => onStopSuccess?.() },
+    );
   };
 
   return (
@@ -69,7 +77,7 @@ export default function ScheduleButton({ hasSchedule, disabled, onSaveSuccess, o
                   <Paper elevation={3}>
                     <ClickAwayListener onClickAway={() => setSplitOpen(false)}>
                       <MenuList dense sx={{ minWidth: 160 }}>
-                        <MenuItem onClick={handleStopSchedule} disabled={stopDeployment.isPending}>
+                        <MenuItem onClick={handleStopSchedule} disabled={upsertSchedule.isPending}>
                           Stop Schedule
                         </MenuItem>
                       </MenuList>

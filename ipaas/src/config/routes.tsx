@@ -17,7 +17,8 @@
  */
 
 import { type RouteProps, Navigate } from 'react-router';
-import { cookiePolicyUrl, loginUrl, orgRoleDetailUrl, privacyPolicyUrl, projectRoleDetailUrl, componentRoleDetailUrl, projectGroupDetailUrl, componentGroupDetailUrl, alertsSegment } from '../paths';
+import { cookiePolicyUrl, loginUrl, orgRoleDetailUrl, privacyPolicyUrl, projectRoleDetailUrl, componentRoleDetailUrl, projectGroupDetailUrl, componentGroupDetailUrl, alertsSegment, loggersSegment } from '../paths';
+import HomeRedirect from '../components/HomeRedirect';
 import OrgHomeRedirect from '../components/OrgHomeRedirect';
 import CreateUser from '../pages/CreateUser';
 import EditUser from '../pages/EditUser';
@@ -30,9 +31,10 @@ import PolicyLayout from '../layouts/PolicyLayout';
 import Login from '../pages/Login';
 import CookiePolicy from '../pages/CookiePolicy';
 import PrivacyPolicy from '../pages/PrivacyPolicy';
-import OIDCCallback from '../pages/OIDCCallback';
 import AppLayout from '../layouts/AppLayout';
 import ProtectedRoute from '../auth/ProtectedRoute';
+import OIDCCallback from '../pages/OIDCCallback';
+import ForceChangePassword from '../pages/ForceChangePassword';
 import Projects from '../pages/Projects';
 import CreateProject from '../pages/CreateProject';
 import CreateComponent from '../pages/CreateComponent';
@@ -51,8 +53,8 @@ import ComponentRoleDetail from '../pages/ComponentRoleDetail';
 import ProjectGroupDetail from '../pages/ProjectGroupDetail';
 import ComponentGroupDetail from '../pages/ComponentGroupDetail';
 import Profile from '../pages/Profile';
-import ForceChangePassword from '../pages/ForceChangePassword';
 import Alerts from '../pages/Alerts';
+import ManageLoggers from '../pages/ManageLoggers';
 import { ScopeResolver, generateMatrixRoutes, withScope, type Matrix } from '../nav';
 import { createElement } from 'react';
 
@@ -61,7 +63,7 @@ export interface AppRoute extends Omit<RouteProps, 'children'> {
 }
 
 const MATRIX: Matrix = {
-  overview: { segment: '', pages: { organizations: Projects, projects: Project, components: Component } },
+  overview: { segment: 'overview', pages: { organizations: Projects, projects: Project, components: Component } },
   logs: { segment: 'logs', pages: { projects: RuntimeLogsProject, components: RuntimeLogsIntegration } },
   alerts: { segment: alertsSegment, pages: { components: Alerts } },
   metrics: { segment: 'metrics', pages: { projects: Metrics, components: Metrics } },
@@ -71,7 +73,9 @@ const MATRIX: Matrix = {
 };
 
 const routes: AppRoute[] = [
-  { path: '/', element: <Navigate to="/login" replace /> },
+  { path: '/', element: <HomeRedirect /> },
+  // Legacy: Asgardeo/Choreo OIDC callback — preserved for future re-enablement
+  { path: '/signin', element: <OIDCCallback /> },
   {
     element: <PublicLayout />,
     children: [{ path: loginUrl(), element: <Login /> }],
@@ -83,10 +87,10 @@ const routes: AppRoute[] = [
       { path: privacyPolicyUrl(), element: <PrivacyPolicy /> },
     ],
   },
-  { path: '/signin', element: <OIDCCallback /> },
   {
     element: <ProtectedRoute />,
     children: [
+      // Legacy: local-auth forced password change — preserved for future re-enablement
       { path: '/change-password', element: <ForceChangePassword /> },
       {
         element: <ScopeResolver />,
@@ -98,7 +102,6 @@ const routes: AppRoute[] = [
               ...generateMatrixRoutes(MATRIX),
               { path: 'organizations/:orgHandler/home', element: createElement(withScope(Projects, ['organizations'])) },
               { path: 'organizations/:orgHandler/projects/:projectHandler/home', element: createElement(withScope(Project, ['projects'])) },
-              { path: 'organizations/:orgHandler/projects/:projectHandler/components/:componentHandler/overview', element: createElement(withScope(Component, ['components'])) },
               { path: 'organizations/:orgHandler/projects/new', element: createElement(withScope(CreateProject, ['organizations'])) },
               { path: 'organizations/:orgHandler/projects/:projectHandler/components/new', element: createElement(withScope(CreateComponent, ['projects'])) },
               { path: 'organizations/:orgHandler/environments/new', element: createElement(withScope(CreateEnvironment, ['organizations'])) },

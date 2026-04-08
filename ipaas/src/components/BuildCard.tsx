@@ -20,24 +20,48 @@ import { Box, Button, CircularProgress, Collapse, Divider, IconButton, Stack, St
 import { ChevronDown, ChevronUp, GitCommit, List } from '@wso2/oxygen-ui-icons-react';
 import { InProgressIcon, SuccessIcon, QueuedIcon, FailedIcon } from './StatusIcons';
 import React, { useEffect, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { fetchBuildRunLogs, type BuildRunLogs } from '../api/builds';
-import { useDeploymentStatus, type GqlCommit } from '../api/queries';
+import { useBuilds, type GqlCommit, type BffWorkflowTask } from '../api/queries';
+import { useDeployComponent } from '../api/mutations';
 
 interface BuildCardProps {
   componentId: string;
-  versionId: string;
   orgHandler: string;
   projectId: string;
   latestCommit?: GqlCommit | null;
 }
 
 const STAGES = [
-  { key: 'init' as const, label: 'Initialization' },
-  { key: 'build' as const, label: 'Build Source & Test' },
-  { key: 'deploy' as const, label: 'Finalization' },
+  { key: 'init' as const, label: 'Initialization', taskName: 'checkout-source' },
+  { key: 'build' as const, label: 'Build Source & Test', taskName: 'build-image' },
+  { key: 'deploy' as const, label: 'Finalization', taskName: 'generate-workload-cr' },
 ];
 
-function getStepStatus(logs: BuildRunLogs | null, key: 'init' | 'build' | 'deploy'): 'success' | 'error' | 'active' | 'pending' {
+// Derive step status from workflow task phase when available, otherwise fall back to logs.
+function getStepStatusFromTask(task: BffWorkflowTask | undefined): 'success' | 'error' | 'active' | 'pending' {
+  if (!task) return 'pending';
+  switch (task.phase) {
+    case 'Succeeded':
+      return 'success';
+    case 'Failed':
+    case 'Error':
+      return 'error';
+    case 'Running':
+      return 'active';
+    default:
+      return 'pending';
+  }
+}
+
+function getStepStatus(logs: BuildRunLogs | null, key: 'init' | 'build' | 'deploy', tasks?: BffWorkflowTask[]): 'success' | 'error' | 'active' | 'pending' {
+  // Prefer workflow task phases from the API
+  if (tasks && tasks.length > 0) {
+    const stage = STAGES.find((s) => s.key === key);
+    const task = stage ? tasks.find((t) => t.name === stage.taskName) : undefined;
+    return getStepStatusFromTask(task);
+  }
+  // Fall back to logs-based detection
   const stage = logs?.[key];
   if (!stage) return 'pending';
   if (stage.status === 'in_progress') return 'active';
@@ -48,13 +72,13 @@ function getStepStatus(logs: BuildRunLogs | null, key: 'init' | 'build' | 'deplo
   return 'pending';
 }
 
-function activeStepIndex(logs: BuildRunLogs | null): number {
-  if (!logs) return 0;
-  const init = getStepStatus(logs, 'init');
-  const build = getStepStatus(logs, 'build');
+function activeStepIndex(logs: BuildRunLogs | null, tasks?: BffWorkflowTask[]): number {
+  if (!logs && (!tasks || tasks.length === 0)) return 0;
+  const init = getStepStatus(logs, 'init', tasks);
+  const build = getStepStatus(logs, 'build', tasks);
   if (init === 'active') return 0;
   if (build === 'active') return 1;
-  if (getStepStatus(logs, 'deploy') === 'active') return 2;
+  if (getStepStatus(logs, 'deploy', tasks) === 'active') return 2;
   if (init === 'success' && build === 'success') return 3;
   if (init === 'success') return 1;
   return 0;
@@ -109,9 +133,12 @@ function buildLogText(logs: BuildRunLogs | null): string | null {
   return lines.join('\n') || '';
 }
 
-export default function BuildCard({ componentId, versionId, orgHandler, projectId, latestCommit }: BuildCardProps) {
-  const { data: deployments = [] } = useDeploymentStatus(componentId, versionId);
+export default function BuildCard({ componentId, orgHandler, projectId, latestCommit }: BuildCardProps) {
+  const { data: deployments = [] } = useBuilds(componentId, projectId);
   const lastBuild = deployments[0] ?? null;
+  const queryClient = useQueryClient();
+  const deployComponent = useDeployComponent();
+  const deployedBuildRef = useRef<string | null>(null);
 
   const [expanded, setExpanded] = useState(true);
   const [showLogs, setShowLogs] = useState(false);
@@ -127,11 +154,28 @@ export default function BuildCard({ componentId, versionId, orgHandler, projectI
     };
   }, []);
 
+  // Auto-deploy to development environment when a build succeeds
+  useEffect(() => {
+    if (!lastBuild || !lastBuild.name) return;
+    const isCompleted = lastBuild.status === 'completed' && lastBuild.conclusion === 'success';
+    if (isCompleted && deployedBuildRef.current !== lastBuild.name) {
+      deployedBuildRef.current = lastBuild.name;
+      deployComponent.mutate(
+        { componentId, projectName: projectId, environment: 'development' },
+        {
+          onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['componentDeployment'] });
+          },
+        },
+      );
+    }
+  }, [lastBuild, componentId, projectId, deployComponent, queryClient]);
+
   // Reset log view when build changes
   useEffect(() => {
     setShowLogs(false);
     setLogs(null);
-  }, [lastBuild?.id]);
+  }, [lastBuild?.name]);
 
   const runId = lastBuild?.buildRef ?? String(lastBuild?.id ?? '');
   const isInProgress = lastBuild?.status === 'in_progress';
@@ -275,9 +319,9 @@ export default function BuildCard({ componentId, versionId, orgHandler, projectI
         <Divider sx={{ mb: 2 }} />
 
         {/* Horizontal stepper */}
-        <Stepper activeStep={activeStepIndex(logs)} alternativeLabel nonLinear sx={{ mb: showLogs ? 2 : 0 }}>
+        <Stepper activeStep={activeStepIndex(logs, lastBuild?.tasks)} alternativeLabel nonLinear sx={{ mb: showLogs ? 2 : 0 }}>
           {STAGES.map(({ key, label }) => {
-            const stepStatus = getStepStatus(logs, key);
+            const stepStatus = getStepStatus(logs, key, lastBuild?.tasks);
             let icon: React.ReactNode;
             if (stepStatus === 'active') icon = <InProgressIcon size={24} />;
             else if (stepStatus === 'success') icon = <SuccessIcon size={24} />;

@@ -42,7 +42,7 @@ export default function Component(scope: ComponentScope): JSX.Element {
   const { data: component, isLoading: loadingComponent } = useComponentByHandler(projectId, scope.component);
   const { data: environments = [] } = useEnvironments(scope.org, projectId);
   const { data: repository } = useComponentRepository(projectId, scope.component);
-  const { data: commits = [] } = useCommitHistory(component?.id ?? '', repository?.branch ?? '');
+  const { data: commits = [] } = useCommitHistory(component?.id ?? '', repository?.branch ?? '', projectId);
   const [selectedArtifact, setSelectedArtifact] = useState<SelectedArtifact | null>(null);
 
   // Load component permissions using the UUID - only when component is loaded
@@ -76,7 +76,7 @@ export default function Component(scope: ComponentScope): JSX.Element {
           <ComponentHeader component={component} project={project} repository={repository} latestCommit={latestCommit} orgHandler={scope.org} projectId={projectId} />
 
           {/* Latest build card */}
-          <BuildCard componentId={component.id} versionId={component.deploymentTracks?.[0]?.id ?? ''} orgHandler={scope.org} projectId={projectId} latestCommit={latestCommit} />
+          <BuildCard componentId={component.id} orgHandler={scope.org} projectId={projectId} latestCommit={latestCommit} />
 
           <Divider sx={{ mb: 3 }} />
 
@@ -102,6 +102,7 @@ export default function Component(scope: ComponentScope): JSX.Element {
                   <PromoteButton
                     orgHandler={scope.org}
                     componentId={component.id}
+                    projectId={projectId}
                     versionId={component.deploymentTracks?.[0]?.id ?? ''}
                     deploymentPipelineId={project?.defaultDeploymentPipelineId ?? ''}
                     sourceEnvId={env.id}

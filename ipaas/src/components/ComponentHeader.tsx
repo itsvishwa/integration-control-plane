@@ -23,8 +23,7 @@ import { type GqlComponentDetail, type GqlProject, type GqlRepository, type GqlC
 import { useUpdateComponent } from '../api/mutations';
 import LabelDialog from './LabelDialog';
 import { formatDistanceToNow } from '../utils/time';
-import { useAuth } from '../auth/AuthContext';
-import { getOrgUuidFromToken } from '../auth/tokenManager';
+import { getOrgUuidFromToken, getUserIdFromToken } from '../auth/tokenManager';
 
 function buildRepoUrl(repo: GqlRepository): string {
   const { gitProvider, organizationApp, nameApp, branch, appSubPath, bitbucketServerUrl, serverUrl, projectApp } = repo;
@@ -49,8 +48,12 @@ function buildRepoUrl(repo: GqlRepository): string {
 }
 
 const DISPLAY_TYPE_LABELS: Record<string, string> = {
-  scheduledTask: 'Automation',
-  integrationAsApi: 'Integration as API',
+  automation: 'Automation',
+  service: 'Service',
+  aiAgent: 'AI Agent',
+  eventIntegration: 'Event Integration',
+  fileIntegration: 'File Integration',
+  proxy: 'Proxy',
 };
 
 interface ComponentHeaderProps {
@@ -63,7 +66,7 @@ interface ComponentHeaderProps {
 }
 
 export default function ComponentHeader({ component, project, repository, latestCommit, orgHandler, projectId }: ComponentHeaderProps) {
-  const { userId } = useAuth();
+  const userId = getUserIdFromToken();
   const [copied, setCopied] = useState(false);
   const [splitOpen, setSplitOpen] = useState(false);
   const splitButtonRef = useRef<HTMLDivElement>(null);
@@ -169,12 +172,12 @@ export default function ComponentHeader({ component, project, repository, latest
     });
   }, []);
 
-  const displayType = component.displayType ?? '';
-  const typeLabel = DISPLAY_TYPE_LABELS[displayType] ?? (displayType || null);
+  const compType = component.componentType ?? '';
+  const typeLabel = DISPLAY_TYPE_LABELS[compType] ?? (component.displayType || null);
   const envMatch = (window.API_CONFIG?.choreoOrgApiUrl ?? '').match(/\/\/apis\.([^.]+)\.choreo\.dev/);
   const devantOrigin = envMatch ? `https://${envMatch[1]}.devant.dev` : null;
 
-  const repoUrl = repository ? buildRepoUrl(repository) : null;
+  const repoUrl = repository?.treeUrl ?? (repository ? buildRepoUrl(repository) : null);
 
   const handleOpenInCloud = () => {
     if (!devantOrigin) return;
@@ -191,12 +194,12 @@ export default function ComponentHeader({ component, project, repository, latest
   };
 
   const handleOpenInVSCode = () => {
-    const isMI = (component.componentType ?? '').toUpperCase() === 'MI';
+    const isMI = (component.buildpackType ?? '').toUpperCase() === 'MI';
     const extensionId = isMI ? 'WSO2.micro-integrator' : 'WSO2.ballerina';
     const params = new URLSearchParams({ project: project?.handler ?? '', org: orgHandler, component: component.handler });
-    if (displayType) {
-      params.set('integrationType', displayType);
-      params.set('integrationDisplayType', typeLabel ?? displayType);
+    if (compType) {
+      params.set('integrationType', component.displayType ?? compType);
+      params.set('integrationDisplayType', typeLabel ?? compType);
     }
     window.open(`vscode://${extensionId}/open?${params}`, '_blank');
     setSplitOpen(false);

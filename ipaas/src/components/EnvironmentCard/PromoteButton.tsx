@@ -27,27 +27,28 @@ import { Permissions } from '../../constants/permissions';
 interface PromoteButtonProps {
   orgHandler: string;
   componentId: string;
+  projectId: string;
   versionId: string;
   deploymentPipelineId: string;
   sourceEnvId: string;
   targetEnvId: string;
 }
 
-export default function PromoteButton({ orgHandler, componentId, versionId, deploymentPipelineId, sourceEnvId, targetEnvId }: PromoteButtonProps) {
+export default function PromoteButton({ orgHandler, componentId, projectId, versionId, deploymentPipelineId, sourceEnvId, targetEnvId }: PromoteButtonProps) {
   const orgUuid = getOrgUuidFromToken() ?? '';
   const { data: sourceDeployment, isLoading: sourceLoading } = useComponentDeployment(orgHandler, orgUuid, componentId, versionId, sourceEnvId);
   const { data: targetDeployment, isLoading: targetLoading } = useComponentDeployment(orgHandler, orgUuid, componentId, versionId, targetEnvId);
   const promote = usePromote();
 
   const deploymentsLoading = sourceLoading || targetLoading;
-  const buildId = sourceDeployment?.build?.buildId;
   const sourceReleaseId = sourceDeployment?.releaseId;
-  const alreadyPromoted = !deploymentsLoading && !!buildId && buildId === targetDeployment?.build?.buildId;
+  const alreadyPromoted = !deploymentsLoading && !!sourceReleaseId && sourceReleaseId === targetDeployment?.releaseId;
 
   const handlePromote = () => {
-    if (!buildId || !sourceReleaseId || alreadyPromoted) return;
+    if (!sourceReleaseId || alreadyPromoted) return;
     promote.mutate({
       componentId,
+      projectName: projectId,
       apiVersionId: versionId,
       sourceReleaseId,
       targetEnvironmentId: targetEnvId,
@@ -55,13 +56,13 @@ export default function PromoteButton({ orgHandler, componentId, versionId, depl
     });
   };
 
-  const tooltipTitle = !buildId ? 'No build available to promote' : alreadyPromoted ? 'Already deployed in target environment' : '';
+  const tooltipTitle = !sourceReleaseId ? 'No deployment available to promote' : alreadyPromoted ? 'Already deployed in target environment' : '';
 
   return (
     <Authorized permissions={Permissions.ENVIRONMENT_MANAGE}>
       <Tooltip title={tooltipTitle}>
         <span>
-          <Button variant="outlined" size="small" startIcon={<ArrowDown size={14} />} disabled={deploymentsLoading || !buildId || !sourceReleaseId || alreadyPromoted || promote.isPending} onClick={handlePromote}>
+          <Button variant="outlined" size="small" startIcon={<ArrowDown size={14} />} disabled={deploymentsLoading || !sourceReleaseId || alreadyPromoted || promote.isPending} onClick={handlePromote}>
             {promote.isPending ? 'Promoting…' : 'Promote'}
           </Button>
         </span>

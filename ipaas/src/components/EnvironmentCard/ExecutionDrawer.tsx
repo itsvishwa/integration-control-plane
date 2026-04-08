@@ -20,11 +20,11 @@ import { Alert, Box, Button, Checkbox, CircularProgress, Divider, Drawer, FormCo
 import { ArrowLeft, CheckCircle2, Copy, Plus, RefreshCcw, Search, Trash2, X, XCircle } from '@wso2/oxygen-ui-icons-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useExecutionArguments, useExecutionLogs, type TaskExecution } from '../../api/queries';
-import { useTriggerComponent } from '../../api/mutations';
+import { useExecutionArguments, useJobPodLogs, useResourceEvents, type BffExecution } from '../../api/queries';
+import { useTriggerExecution } from '../../api/mutations';
 
 interface ExecutionDrawerProps {
-  execution: TaskExecution | null;
+  execution: BffExecution | null;
   open: boolean;
   onClose: () => void;
   onRunSuccess?: () => void;
@@ -33,14 +33,13 @@ interface ExecutionDrawerProps {
   componentHandler: string;
   projectId: string;
   componentId: string;
-  releaseId: string;
-  deploymentTrackId: string;
   environmentId: string;
 }
 
-function formatTriggeredAt(unixSeconds: string): string {
-  if (!unixSeconds) return '—';
-  const date = new Date(parseInt(unixSeconds, 10) * 1000);
+function formatTriggeredAt(timestamp: string): string {
+  if (!timestamp) return '—';
+  const date = new Date(timestamp);
+  if (isNaN(date.getTime())) return '—';
   const today = new Date();
   const timeStr = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   if (date.toDateString() === today.toDateString()) return `Today at ${timeStr}`;
@@ -50,9 +49,12 @@ function formatTriggeredAt(unixSeconds: string): string {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ` at ${timeStr}`;
 }
 
-function formatDuration(startUnix: string, endUnix: string): string {
-  if (!startUnix || !endUnix) return '—';
-  const diff = parseInt(endUnix, 10) - parseInt(startUnix, 10);
+function formatDuration(startTime: string, completionTime: string): string {
+  if (!startTime || !completionTime) return '—';
+  const start = new Date(startTime).getTime();
+  const end = new Date(completionTime).getTime();
+  if (isNaN(start) || isNaN(end)) return '—';
+  const diff = Math.floor((end - start) / 1000);
   if (diff < 0) return '—';
   const minutes = Math.floor(diff / 60);
   const seconds = diff % 60;
@@ -98,7 +100,7 @@ const drawerSx = {
   },
 };
 
-export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess, orgHandler, projectId, componentId, releaseId, deploymentTrackId, environmentId }: ExecutionDrawerProps) {
+export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess, projectId, componentId, environmentId }: ExecutionDrawerProps) {
   const queryClient = useQueryClient();
   const handleClose = () => {
     (document.activeElement as HTMLElement)?.blur();
@@ -115,11 +117,14 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
   const [logSearch, setLogSearch] = useState('');
   const [logFilterMode, setLogFilterMode] = useState(false);
 
-  const trigger = useTriggerComponent();
+  const trigger = useTriggerExecution();
 
-  const { data: fetchedArgs, isLoading: argsLoading } = useExecutionArguments(execution?.runId ?? '', componentId, releaseId, open && tab === 1 && !!execution?.runId);
+  const { data: fetchedArgs, isLoading: argsLoading } = useExecutionArguments(execution?.jobId ?? '', componentId, '', open && tab === 1 && !!execution?.jobId);
 
-  const { data: logs = [], isLoading: logsLoading } = useExecutionLogs(componentId, deploymentTrackId, execution?.id ?? '', environmentId, open && view === 'logs' && !!execution?.id);
+  const { data: rawLogs = [], isLoading: logsLoading } = useJobPodLogs(componentId, environmentId, execution?.jobId ?? '', open && view === 'logs' && !!execution?.jobId);
+  const logs = rawLogs.map((e) => ({ timestamp: e.timestamp, message: e.log }));
+
+  const { data: events = [], isLoading: eventsLoading } = useResourceEvents(componentId, environmentId, 'v1', 'Job', execution?.jobId ?? '', 'batch', open && tab === 2 && !!execution?.jobId);
 
   const filteredLogs = useMemo(() => {
     if (!logFilterMode || !logSearch.trim()) return logs;
@@ -156,9 +161,8 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
 
   const handleRun = () => {
     setRunError(null);
-    const execArgs = args.filter((a) => a.trim() !== '').map((a) => ({ argument_name: '', argument_value: a }));
     trigger.mutate(
-      { orgHandler, projectId, componentId, releaseId, args: execArgs },
+      { componentId, projectId, environment: environmentId },
       {
         onSuccess: () => {
           onClose();
@@ -170,7 +174,8 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
   };
 
   const handleLogsRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['executionLogs', componentId, deploymentTrackId, execution?.id, environmentId] });
+    queryClient.invalidateQueries({ queryKey: ['resourceLogs'] });
+    queryClient.invalidateQueries({ queryKey: ['resourceTree', componentId, environmentId] });
   };
 
   return (
@@ -178,7 +183,7 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
       {/* Header */}
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ px: 2, py: 1.5, borderBottom: '1px solid', borderColor: 'divider', flexShrink: 0 }}>
         <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-          {view === 'logs' ? 'Attempt: 1' : execution ? `Execution: ${execution.id}` : 'Execution'}
+          {view === 'logs' ? 'Attempt: 1' : execution ? `Execution: ${execution.jobId}` : 'Execution'}
         </Typography>
         <IconButton size="small" aria-label="close" onClick={handleClose}>
           <X size={16} />
@@ -280,7 +285,7 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
                       Triggered at
                     </Typography>
                     <Typography variant="body2" sx={{ fontWeight: 600, mt: 0.5 }}>
-                      {formatTriggeredAt(execution.startTime)}
+                      {formatTriggeredAt(execution.startTime ?? '')}
                     </Typography>
                   </Box>
                   <Box>
@@ -310,6 +315,7 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
               <Tabs value={tab} onChange={(_, v) => setTab(v)}>
                 <Tab label="Attempts" />
                 <Tab label="Arguments" />
+                <Tab label="Events" />
               </Tabs>
               <Divider />
             </Box>
@@ -337,10 +343,10 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
                     <Typography variant="body2">#1</Typography>
                   </Stack>
                   <Typography variant="body2" color="text.secondary" sx={{ flex: '0 0 80px' }}>
-                    {isTerminal(execution.status) ? formatDuration(execution.startTime, execution.completionTime) : '--'}
+                    {isTerminal(execution.status) ? formatDuration(execution.startTime ?? '', execution.completionTime ?? '') : '--'}
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-                    {isTerminal(execution.status) ? formatTriggeredAt(execution.startTime) : '--'}
+                    {isTerminal(execution.status) ? formatTriggeredAt(execution.startTime ?? '') : '--'}
                   </Typography>
                   <Button variant="text" size="small" onClick={() => setView('logs')}>
                     View Logs
@@ -399,13 +405,58 @@ export default function ExecutionDrawer({ execution, open, onClose, onRunSuccess
                 )}
               </Box>
             )}
+
+            {/* Events tab */}
+            {tab === 2 && (
+              <Box sx={{ px: 2, py: 2 }}>
+                {eventsLoading ? (
+                  <CircularProgress size={24} sx={{ display: 'block', mx: 'auto', my: 2 }} />
+                ) : events.length === 0 ? (
+                  <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+                    No events available for this execution.
+                  </Typography>
+                ) : (
+                  <Stack gap={1}>
+                    {events.map((evt, i) => (
+                      <Box key={i} sx={{ border: '1px solid', borderColor: evt.type === 'Warning' ? 'warning.main' : 'divider', borderRadius: 1, px: 2, py: 1.5 }}>
+                        <Stack direction="row" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
+                          <Typography variant="body2" sx={{ fontWeight: 600, color: evt.type === 'Warning' ? 'warning.main' : 'text.primary' }}>
+                            {evt.reason}
+                          </Typography>
+                          {evt.count && evt.count > 1 && (
+                            <Typography variant="caption" color="text.secondary">
+                              x{evt.count}
+                            </Typography>
+                          )}
+                        </Stack>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 0.5 }}>
+                          {evt.message}
+                        </Typography>
+                        <Stack direction="row" gap={2}>
+                          {evt.source && (
+                            <Typography variant="caption" color="text.secondary">
+                              Source: {evt.source}
+                            </Typography>
+                          )}
+                          {evt.lastTimestamp && (
+                            <Typography variant="caption" color="text.secondary">
+                              {new Date(evt.lastTimestamp).toLocaleString()}
+                            </Typography>
+                          )}
+                        </Stack>
+                      </Box>
+                    ))}
+                  </Stack>
+                )}
+              </Box>
+            )}
           </Box>
 
           {/* Footer — only on Arguments tab */}
           {tab === 1 && !argsLoading && (
             <Stack direction="row" justifyContent="flex-end" gap={1} sx={{ px: 2, py: 1.5, borderTop: '1px solid', borderColor: 'divider', flexShrink: 0 }}>
               <Button onClick={onClose}>Cancel</Button>
-              <Button variant="contained" onClick={handleRun} disabled={trigger.isPending || !releaseId} startIcon={trigger.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}>
+              <Button variant="contained" onClick={handleRun} disabled={trigger.isPending} startIcon={trigger.isPending ? <CircularProgress color="inherit" size={16} /> : undefined}>
                 {trigger.isPending ? 'Executing…' : 'Execute'}
               </Button>
             </Stack>

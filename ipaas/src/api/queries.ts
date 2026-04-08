@@ -17,9 +17,61 @@
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { gql } from './graphql';
-import { authenticatedFetch, getOrgUuidFromToken } from '../auth/tokenManager';
+import { authenticatedFetch } from '../auth/tokenManager';
+import { icpClient } from './client';
+import { env } from '../config/env';
 import { choreoDevopsApiUrl } from '../config/api';
+
+// ── BFF response shapes (mirrors ipaas-service/models/project.go, component.go) ──
+
+export interface BffProject {
+  uid?: string;
+  name: string;
+  displayName?: string;
+  description?: string;
+  deploymentPipeline?: string;
+  createdAt?: string;
+  status?: string;
+}
+
+export interface BffProjectList {
+  items: BffProject[];
+  totalCount?: number;
+}
+
+export interface BffDeploymentTrack {
+  id: string;
+  branch?: string;
+  commitSha?: string;
+  url?: string;
+  appPath?: string;
+  componentId?: string;
+  latest?: boolean;
+  autoDeployEnabled?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface BffComponent {
+  uid?: string;
+  name: string;
+  projectName?: string;
+  displayName?: string;
+  description?: string;
+  buildpackType?: string;
+  componentType?: string;
+  displayType?: string;
+  createdAt?: string;
+  status?: string;
+  deploymentTracks?: BffDeploymentTrack[];
+}
+
+export interface BffComponentList {
+  items: BffComponent[];
+  totalCount?: number;
+}
+
+// ── GQL-compatible output shapes (consumed by existing UI components) ──
 
 export interface GqlProject {
   id: string;
@@ -41,10 +93,11 @@ export interface GqlComponent {
   name: string;
   handler: string;
   displayName: string;
+  buildpackType?: string;
+  componentType?: string;
   displayType: string;
   description: string;
   status: string;
-  componentType?: string;
   componentSubType: string | null;
   version: string;
   createdAt: string;
@@ -53,228 +106,155 @@ export interface GqlComponent {
   apiId?: string;
 }
 
-const PROJECT_FIELDS = 'id, orgId, name, handler, description, version, createdDate, updatedAt, region, type, defaultDeploymentPipelineId';
+// ── Mapping helpers (exported for use by mutations.ts) ──
 
-const PROJECTS_QUERY = `
-  query GetProjects($orgId: Int!) {
-    projects(orgId: $orgId) { ${PROJECT_FIELDS} }
-  }`;
+export function mapProject(p: BffProject): GqlProject {
+  return {
+    id: p.name,                      // K8s name is the unique identifier and URL slug
+    orgId: 0,
+    name: p.displayName || p.name,
+    handler: p.name,
+    description: p.description ?? '',
+    version: '',
+    createdDate: p.createdAt ?? '',
+    updatedAt: p.createdAt ?? '',
+    region: '',
+    type: '',
+    defaultDeploymentPipelineId: '',
+  };
+}
 
-const PROJECT_QUERY = `
-  query GetProject($orgId: Int!, $projectId: String!) {
-    project(orgId: $orgId, projectId: $projectId) { ${PROJECT_FIELDS} }
-  }`;
+export function mapComponent(c: BffComponent): GqlComponent {
+  return {
+    id: c.name,
+    projectId: c.projectName ?? '',
+    name: c.displayName || c.name,
+    handler: c.name,
+    displayName: c.displayName ?? c.name,
+    buildpackType: c.buildpackType,
+    componentType: c.componentType,
+    displayType: c.displayType ?? '',
+    description: c.description ?? '',
+    status: c.status ?? '',
+    componentSubType: c.componentType ?? null,
+    version: '',
+    createdAt: c.createdAt ?? '',
+    lastBuildDate: c.createdAt ?? '',
+    labels: [],
+    apiId: undefined,
+  };
+}
 
-const PROJECT_BY_HANDLER_QUERY = `
-  query GetProjectByHandler($orgId: Int!, $projectHandler: String!) {
-    projectByHandler(orgId: $orgId, projectHandler: $projectHandler) { ${PROJECT_FIELDS} }
-  }`;
+// // ── Org / project hooks ──
+// const PROJECT_FIELDS = 'id, orgId, name, handler, description, version, createdDate, updatedAt, region, type, defaultDeploymentPipelineId';
 
-// componentType excluded as it is not in the schema
-const COMPONENTS_QUERY = `
-  query GetComponents($orgHandler: String!, $projectId: String!) {
-    components(orgHandler: $orgHandler, projectId: $projectId) {
-      projectId, id, name, handler, displayName, displayType, description, status, componentSubType, version, createdAt, lastBuildDate
-    }
-  }`;
+// const PROJECTS_QUERY = `
+//   query GetProjects($orgId: Int!) {
+//     projects(orgId: $orgId) { ${PROJECT_FIELDS} }
+//   }`;
+
+// const PROJECT_QUERY = `
+//   query GetProject($orgId: Int!, $projectId: String!) {
+//     project(orgId: $orgId, projectId: $projectId) { ${PROJECT_FIELDS} }
+//   }`;
+
+// const PROJECT_BY_HANDLER_QUERY = `
+//   query GetProjectByHandler($orgId: Int!, $projectHandler: String!) {
+//     projectByHandler(orgId: $orgId, projectHandler: $projectHandler) { ${PROJECT_FIELDS} }
+//   }`;
+
+// // componentType excluded as it is not in the schema
+// const COMPONENTS_QUERY = `
+//   query GetComponents($orgHandler: String!, $projectId: String!) {
+//     components(orgHandler: $orgHandler, projectId: $projectId) {
+//       projectId, id, name, handler, displayName, displayType, description, status, componentSubType, version, createdAt, lastBuildDate
+//     }
+//   }`;
 
 function orgId(): number {
-  return window.API_CONFIG.asgardeoOrgNumericId ?? 0;
+  return env.ICP_ORG_NUMERIC_ID;
 }
 
-export function useProjects() {
-  const id = orgId();
-  return useQuery({
-    queryKey: ['projects', id],
-    queryFn: () => gql<{ projects: GqlProject[] }>(PROJECTS_QUERY, { orgId: id }).then((d) => d.projects),
-    enabled: id > 0,
-  });
+export interface OrgEntry {
+  handle: string;
+  numericId: number;
+  uuid: string;
 }
 
-interface OrgEntry {
-  handle?: string;
-  orgHandle?: string;
-  id?: string | number;
-  orgId?: string | number;
-  // The org UUID may be returned under any of these field names depending on API version
-  uuid?: string;
-  orgUuid?: string;
-  org_uuid?: string;
-}
-
+/**
+ * Returns the current organization. With Thunder auth the org context is
+ * derived from JWT claims in the BFF; the frontend does not need a numeric ID.
+ */
 export function useOrgs() {
   return useQuery({
     queryKey: ['orgs'],
-    queryFn: async () => {
-      const res = await authenticatedFetch(`${window.API_CONFIG.choreoOrgApiUrl}/orgs`);
-      if (!res.ok) throw new Error('Failed to fetch orgs');
-      const data = await res.json();
-      const list: OrgEntry[] = Array.isArray(data) ? data : (data.list ?? data.organizations ?? []);
-      return list
-        .map((o) => ({
-          handle: o.handle ?? o.orgHandle ?? '',
-          numericId: parseInt(String(o.id ?? o.orgId ?? '0'), 10),
-          uuid: o.uuid ?? o.orgUuid ?? o.org_uuid ?? '',
-        }))
-        .filter((o) => o.handle && o.numericId > 0);
-    },
+    queryFn: async (): Promise<OrgEntry[]> => [{ handle: 'default', numericId: 0, uuid: '' }],
     staleTime: 5 * 60 * 1000,
   });
 }
 
-export function useProjectsByOrg(orgHandle: string) {
-  const { data: orgs } = useOrgs();
-  const numericId = orgs?.find((o) => o.handle === orgHandle)?.numericId ?? 0;
+export function useProjects() {
   return useQuery({
-    queryKey: ['projects', numericId],
-    queryFn: () => gql<{ projects: GqlProject[] }>(PROJECTS_QUERY, { orgId: numericId }).then((d) => d.projects),
-    enabled: numericId > 0,
+    queryKey: ['projects'],
+    queryFn: () => icpClient.get<BffProjectList>('/projects').then((d) => d.items.map(mapProject)),
   });
 }
 
-export function useProject(projectId: string) {
-  const id = orgId();
+// export function useProjects() {
+//   const id = orgId();
+//   return useQuery({
+//     queryKey: ['projects', id],
+//     queryFn: () => gql<{ projects: GqlProject[] }>(PROJECTS_QUERY, { orgId: id }).then((d) => d.projects),
+//     enabled: id > 0,
+//   });
+// }
+
+export function useProjectsByOrg(orgHandle: string) {
   return useQuery({
-    queryKey: ['project', projectId, id],
-    queryFn: () => gql<{ project: GqlProject }>(PROJECT_QUERY, { orgId: id, projectId }).then((d) => d.project),
-    enabled: !!projectId && id > 0,
+    queryKey: ['projects'],
+    queryFn: () => icpClient.get<BffProjectList>('/projects').then((d) => d.items.map(mapProject)),
+    enabled: !!orgHandle,
+  });
+}
+
+export function useProject(projectName: string) {
+  return useQuery({
+    queryKey: ['project', projectName],
+    queryFn: () => icpClient.get<BffProject>(`/projects/${encodeURIComponent(projectName)}`).then(mapProject),
+    enabled: !!projectName,
   });
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function useProjectByHandler(handler: string) {
-  const id = orgId();
   return useQuery({
-    queryKey: ['project', 'handler', handler, id],
-    queryFn: () => gql<{ projectByHandler: GqlProject }>(PROJECT_BY_HANDLER_QUERY, { orgId: id, projectHandler: handler }).then((d) => d.projectByHandler),
-    // Guard: never call if handler is empty or looks like a UUID (should use useProject instead)
-    enabled: !!handler && id > 0 && !UUID_RE.test(handler),
+    queryKey: ['project', 'handler', handler],
+    queryFn: () => icpClient.get<BffProject>(`/projects/${encodeURIComponent(handler)}`).then(mapProject),
+    // Guard: never call if handler is empty or looks like a UUID (use useProject instead)
+    enabled: !!handler && !UUID_RE.test(handler),
   });
 }
 
 export interface ProjectContributor {
-  id: number;
   displayName: string;
   email: string;
-  pictureUrl: string | null;
+  avatarUrl: string;
   totalContributions: number;
 }
 
-const PROJECT_CONTRIBUTORS_QUERY = `
-  query GetProjectContributors($orgId: Int!, $projectId: String!) {
-    project(orgId: $orgId, projectId: $projectId) {
-      projectContributorsData {
-        contributorCount
-        contributors { id, pictureUrl, email, displayName, totalContributions }
-      }
-    }
-  }`;
+interface BffContributorList {
+  items: ProjectContributor[];
+}
 
-export function useProjectContributors(projectId: string) {
-  const id = orgId();
+export function useProjectContributors(projectName: string) {
   return useQuery({
-    queryKey: ['projectContributors', projectId, id],
+    queryKey: ['projectContributors', projectName],
     queryFn: () =>
-      gql<{ project: { projectContributorsData: { contributorCount: number; contributors: ProjectContributor[] } } }>(PROJECT_CONTRIBUTORS_QUERY, { orgId: id, projectId })
-        .then((d) => d.project?.projectContributorsData?.contributors ?? [])
-        .catch(() => []),
-    enabled: !!projectId && id > 0,
+      icpClient.get<BffContributorList>(`/projects/${encodeURIComponent(projectName)}/contributors`)
+        .then((d) => d.items),
+    enabled: !!projectName,
     staleTime: 5 * 60 * 1000,
-  });
-}
-
-export function useComponents(orgHandler: string, projectId: string) {
-  return useQuery({
-    queryKey: ['components', orgHandler, projectId],
-    queryFn: () => gql<{ components: GqlComponent[] }>(COMPONENTS_QUERY, { orgHandler, projectId }).then((d) => d.components),
-    enabled: !!orgHandler && !!projectId,
-  });
-}
-
-export interface GqlApiVersion {
-  id: string;
-  apiVersion: string;
-  branch: string;
-  latest: boolean;
-  accessibility?: string;
-}
-
-export interface GqlComponentDetail extends GqlComponent {
-  orgHandler: string;
-  deploymentTracks?: { id: string }[];
-  apiVersions?: GqlApiVersion[];
-}
-
-const COMPONENT_BY_HANDLER_QUERY = `
-  query GetComponent($projectId: String!, $componentHandler: String!) {
-    component(projectId: $projectId, componentHandler: $componentHandler) {
-      projectId, id, name, handler, displayName, displayType,
-      description, status, componentSubType,
-      version, createdAt, lastBuildDate, orgHandler, labels, apiId,
-      deploymentTracks { id }
-      apiVersions { id, apiVersion, branch, latest, accessibility }
-    }
-  }`;
-
-export function useComponentByHandler(projectId: string, handler: string | undefined) {
-  return useQuery({
-    queryKey: ['component', projectId, handler],
-    queryFn: () => gql<{ component: GqlComponentDetail }>(COMPONENT_BY_HANDLER_QUERY, { projectId, componentHandler: handler }).then((d) => d.component),
-    enabled: !!projectId && !!handler,
-  });
-}
-
-const PROJECT_COMPONENT_LABELS_QUERY = `
-  query GetProjectComponentLabels($projectId: String!, $orgId: Int!) {
-    projectComponentLabels(projectId: $projectId, orgId: $orgId)
-  }`;
-
-export function useProjectComponentLabels(projectId: string) {
-  const id = orgId();
-  return useQuery({
-    queryKey: ['projectComponentLabels', projectId],
-    queryFn: () => gql<{ projectComponentLabels: string[] }>(PROJECT_COMPONENT_LABELS_QUERY, { projectId, orgId: id }).then((d) => d.projectComponentLabels ?? []),
-    enabled: !!projectId && id > 0,
-    staleTime: 5 * 60 * 1000,
-  });
-}
-
-export interface GqlEnvironment {
-  id: string;
-  name: string;
-  critical: boolean;
-  templateId?: string;
-  dpId?: string;
-  description?: string;
-  createdAt?: string;
-}
-
-const ENVIRONMENTS_QUERY = `
-  query GetEnvironments($orgUuid: String!, $projectId: String!) {
-    environments(orgUuid: $orgUuid, type: "external", projectId: $projectId) {
-      id, name, critical, templateId, dpId
-    }
-  }`;
-
-export function useEnvironments(orgUuid: string, projectId: string) {
-  const effectiveOrgUuid = getOrgUuidFromToken() ?? orgUuid;
-  return useQuery({
-    queryKey: ['environments', effectiveOrgUuid, projectId],
-    queryFn: () => gql<{ environments: GqlEnvironment[] }>(ENVIRONMENTS_QUERY, { orgUuid: effectiveOrgUuid, projectId }).then((d) => d.environments),
-    enabled: !!effectiveOrgUuid && !!projectId,
-  });
-}
-
-const ALL_ENVIRONMENTS_QUERY = `{
-  environments { id, name, description, critical, dpId, createdAt }
-}`;
-
-export function useAllEnvironments() {
-  return useQuery({
-    queryKey: ['environments'],
-    queryFn: () => gql<{ environments: GqlEnvironment[] }>(ALL_ENVIRONMENTS_QUERY).then((d) => d.environments),
-    retry: false,
   });
 }
 
@@ -299,23 +279,134 @@ export function useCloudDataPlanes(orgUuid: string) {
   });
 }
 
+export function useComponents(orgHandler: string, projectName: string) {
+  return useQuery({
+    queryKey: ['components', projectName],
+    queryFn: () =>
+      icpClient.get<BffComponentList>('/components', { projectName }).then((d) => d.items.map(mapComponent)),
+    enabled: !!orgHandler && !!projectName,
+  });
+}
+
+export interface GqlApiVersion {
+  id: string;
+  apiVersion: string;
+  branch: string;
+  latest: boolean;
+  accessibility?: string;
+}
+
+export interface GqlComponentDetail extends GqlComponent {
+  orgHandler: string;
+  deploymentTracks?: { id: string }[];
+  apiVersions?: GqlApiVersion[];
+}
+
+// const COMPONENT_BY_HANDLER_QUERY = `
+//   query GetComponent($projectId: String!, $componentHandler: String!) {
+//     component(projectId: $projectId, componentHandler: $componentHandler) {
+//       projectId, id, name, handler, displayName, displayType,
+//       description, status, componentSubType,
+//       version, createdAt, lastBuildDate, orgHandler, labels, apiId,
+//       deploymentTracks { id }
+//       apiVersions { id, apiVersion, branch, latest, accessibility }
+//     }
+//   }`;
+
+export function useComponentByHandler(projectName: string, handler: string | undefined) {
+  return useQuery({
+    queryKey: ['component', projectName, handler],
+    queryFn: () =>
+      icpClient.get<BffComponentList>('/components', { projectName }).then((d) => {
+        const c = d.items.find((x) => x.name === handler);
+        if (!c) throw new Error(`Component '${handler}' not found in project '${projectName}'`);
+        return {
+          ...mapComponent(c),
+          orgHandler: '',
+          deploymentTracks: (c.deploymentTracks ?? []).map((t) => ({ id: t.id })),
+        } as GqlComponentDetail;
+      }),
+    enabled: !!projectName && !!handler,
+  });
+}
+
+export function useProjectComponentLabels(projectId: string) {
+  const id = orgId();
+  return useQuery({
+    queryKey: ['projectComponentLabels', projectId],
+    queryFn: () =>
+      icpClient
+        .get<{ items: string[] }>(`/components/${encodeURIComponent(projectId)}/labels`, { projectName: projectId, orgId: String(id) })
+        .then((d) => d.items ?? []),
+    enabled: !!projectId && id > 0,
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+export interface BffEnvironment {
+  uid?: string;
+  name: string;
+  displayName?: string;
+  dataPlaneRef?: string;
+  isProduction?: boolean;
+  createdAt?: string;
+}
+
+export interface BffEnvironmentList {
+  items: BffEnvironment[];
+}
+
+export interface GqlEnvironment {
+  id: string;
+  name: string;
+  critical: boolean;
+  templateId?: string;
+  dpId?: string;
+  description?: string;
+  createdAt?: string;
+}
+
+export function mapEnvironment(e: BffEnvironment): GqlEnvironment {
+  return {
+    id: e.name,
+    name: e.displayName || e.name,
+    critical: e.isProduction ?? false,
+    dpId: e.dataPlaneRef,
+    createdAt: e.createdAt,
+  };
+}
+
+export function useEnvironments(orgUuid: string, projectId: string) {
+  // const effectiveOrgUuid = getOrgUuidFromToken() ?? orgUuid;
+  return useQuery({
+    queryKey: ['environments'],
+    queryFn: () => icpClient.get<BffEnvironmentList>('/environments').then((d) => d.items.map(mapEnvironment)),
+    enabled: !!orgUuid && !!projectId,
+  });
+}
+
+export function useAllEnvironments() {
+  return useQuery({
+    queryKey: ['environments'],
+    queryFn: () => icpClient.get<BffEnvironmentList>('/environments').then((d) => d.items.map(mapEnvironment)),
+    retry: false,
+  });
+}
+
+
 export interface GqlLogger {
   componentName: string;
   logLevel: string;
   runtimeIds: string[];
 }
 
-const LOGGERS_BY_ENV_AND_COMPONENT_QUERY = `
-  query GetLoggers($environmentId: String!, $componentId: String!) {
-    loggersByEnvironmentAndComponent(environmentId: $environmentId, componentId: $componentId) {
-      componentName, logLevel, runtimeIds
-    }
-  }`;
-
 export function useLoggers(environmentId: string, componentId: string) {
   return useQuery({
     queryKey: ['loggers', environmentId, componentId],
-    queryFn: () => gql<{ loggersByEnvironmentAndComponent: GqlLogger[] }>(LOGGERS_BY_ENV_AND_COMPONENT_QUERY, { environmentId, componentId }).then((d) => d.loggersByEnvironmentAndComponent),
+    queryFn: () =>
+      icpClient
+        .get<{ items: GqlLogger[] }>(`/components/${encodeURIComponent(componentId)}/loggers`, { environmentId })
+        .then((d) => d.items ?? []),
     enabled: !!environmentId && !!componentId,
   });
 }
@@ -335,42 +426,27 @@ export interface GqlRuntime {
   component?: { displayName: string };
 }
 
-const RUNTIMES_QUERY = `
-  query GetRuntimes($environmentId: String!, $projectId: String!, $componentId: String!) {
-    runtimes(environmentId: $environmentId, projectId: $projectId, componentId: $componentId) {
-      runtimeId, runtimeType, status, version,
-      platformName, platformVersion, platformHome,
-      osName, osVersion, registrationTime, lastHeartbeat
-    }
-  }`;
-
 export function useRuntimes(envId: string, projectId: string, componentId: string) {
   return useQuery({
     queryKey: ['runtimes', envId, projectId, componentId],
-    queryFn: () => gql<{ runtimes: GqlRuntime[] }>(RUNTIMES_QUERY, { environmentId: envId, projectId, componentId }).then((d) => d.runtimes),
+    queryFn: () =>
+      icpClient
+        .get<{ items: GqlRuntime[] }>(`/components/${encodeURIComponent(componentId)}/runtimes`, { environmentId: envId, projectName: projectId })
+        .then((d) => d.items ?? []),
     enabled: !!envId && !!projectId && !!componentId,
   });
 }
 
-const PROJECT_RUNTIMES_QUERY = `
-  query GetProjectRuntimes($environmentId: String!, $projectId: String!) {
-    runtimes(environmentId: $environmentId, projectId: $projectId) {
-      runtimeId, runtimeType, status, version,
-      platformName, platformVersion, platformHome,
-      osName, osVersion, registrationTime, lastHeartbeat,
-      component { displayName }
-    }
-  }`;
-
 export function useProjectRuntimes(envId: string, projectId: string) {
   return useQuery({
     queryKey: ['projectRuntimes', envId, projectId],
-    queryFn: () => gql<{ runtimes: GqlRuntime[] }>(PROJECT_RUNTIMES_QUERY, { environmentId: envId, projectId }).then((d) => d.runtimes),
+    queryFn: () =>
+      icpClient
+        .get<{ items: GqlRuntime[] }>(`/projects/${encodeURIComponent(projectId)}/runtimes`, { environmentId: envId })
+        .then((d) => d.items ?? []),
     enabled: !!envId && !!projectId,
   });
 }
-
-export { RUNTIMES_QUERY, PROJECT_RUNTIMES_QUERY };
 
 export interface GqlArtifactType {
   artifactType: string;
@@ -381,14 +457,9 @@ export function useArtifactTypes(componentId: string, envId: string) {
   return useQuery({
     queryKey: ['artifactTypes', componentId, envId],
     queryFn: () =>
-      gql<{ componentArtifactTypes: GqlArtifactType[] }>(
-        `query ComponentArtifactTypes($componentId: String!, $environmentId: String!) {
-          componentArtifactTypes(componentId: $componentId, environmentId: $environmentId) {
-            artifactType, artifactCount
-          }
-        }`,
-        { componentId, environmentId: envId },
-      ).then((d) => d.componentArtifactTypes),
+      icpClient
+        .get<{ items: GqlArtifactType[] }>('/artifacts/types', { componentId, environmentId: envId })
+        .then((d) => d.items ?? []),
     enabled: !!componentId && !!envId,
   });
 }
@@ -470,19 +541,14 @@ const ARTIFACT_QUERY_MAP: Record<string, { queryName: string; field: string; fie
 };
 
 export function useArtifacts(artifactType: string, envId: string, componentId: string, options?: { enabled?: boolean }) {
-  const mapping = ARTIFACT_QUERY_MAP[artifactType];
+  const known = artifactType in ARTIFACT_QUERY_MAP;
   return useQuery({
     queryKey: ['artifacts', artifactType, envId, componentId],
-    queryFn: async () => {
-      if (!mapping) return [];
-      const data = await gql<Record<string, GqlArtifact[]>>(`query ArtifactQuery($environmentId: String!, $componentId: String!) { ${mapping.field}(environmentId: $environmentId, componentId: $componentId) { ${mapping.gqlFields} } }`, {
-        environmentId: envId,
-        componentId,
-      }).catch(() => ({}) as Record<string, GqlArtifact[]>);
-      return data[mapping.field] ?? [];
-    },
-    enabled: !!artifactType && !!envId && !!componentId && !!mapping && (options?.enabled ?? true),
-    retry: false,
+    queryFn: () =>
+      icpClient
+        .get<{ items: GqlArtifact[] }>('/artifacts', { artifactType, environmentId: envId, componentId })
+        .then((d) => d.items ?? []),
+    enabled: known && !!artifactType && !!envId && !!componentId && (options?.enabled ?? true),
   });
 }
 
@@ -490,39 +556,20 @@ export { ARTIFACT_QUERY_MAP };
 
 // ── Artifact detail panel queries ──
 
-const ARTIFACT_SOURCE_QUERY = `
-  query GetArtifactSource($environmentId: String!, $componentId: String!, $artifactType: String!, $artifactName: String!) {
-    artifactSourceByComponent(environmentId: $environmentId, componentId: $componentId, artifactType: $artifactType, artifactName: $artifactName)
-  }`;
-
 export function useArtifactSource(envId: string, componentId: string, artifactType: string, artifactName: string) {
   return useQuery({
     queryKey: ['artifactSource', envId, componentId, artifactType, artifactName],
     queryFn: () =>
-      gql<{ artifactSourceByComponent: string }>(ARTIFACT_SOURCE_QUERY, {
-        environmentId: envId,
-        componentId,
-        artifactType,
-        artifactName,
-      }).then((d) => d.artifactSourceByComponent),
+      icpClient.get<string>('/artifacts/source', { environmentId: envId, componentId, artifactType, artifactName }),
     enabled: !!envId && !!componentId && !!artifactType && !!artifactName,
   });
 }
-
-const LOCAL_ENTRY_VALUE_QUERY = `
-  query LocalEntryValue($componentId: String!, $entryName: String!, $environmentId: String) {
-    localEntryValueByComponent(componentId: $componentId, entryName: $entryName, environmentId: $environmentId)
-  }`;
 
 export function useLocalEntryValue(componentId: string, entryName: string, envId: string) {
   return useQuery({
     queryKey: ['localEntryValue', componentId, entryName, envId],
     queryFn: () =>
-      gql<{ localEntryValueByComponent: string }>(LOCAL_ENTRY_VALUE_QUERY, {
-        componentId,
-        entryName,
-        environmentId: envId,
-      }).then((d) => d.localEntryValueByComponent),
+      icpClient.get<string>('/artifacts/local-entry', { componentId, entryName, environmentId: envId }),
     enabled: !!componentId && !!entryName && !!envId,
   });
 }
@@ -549,57 +596,20 @@ export interface GqlArtifactParam {
   value: string;
 }
 
-const ARTIFACT_PARAMS_QUERY = `
-  query ArtifactParams($componentId: String!, $artifactType: String!, $artifactName: String!, $environmentId: String, $runtimeId: String) {
-    artifactParametersByComponent(
-      componentId: $componentId,
-      artifactType: $artifactType,
-      artifactName: $artifactName,
-      environmentId: $environmentId,
-      runtimeId: $runtimeId
-    ) {
-      name
-      value
-    }
-  }`;
-
 export function useArtifactParams(componentId: string, artifactType: string, artifactName: string, envId: string, runtimeId?: string) {
   return useQuery({
     queryKey: ['artifactParams', componentId, artifactType, artifactName, envId, runtimeId],
     queryFn: () =>
-      gql<{ artifactParametersByComponent: GqlArtifactParam[] }>(ARTIFACT_PARAMS_QUERY, {
-        componentId,
-        artifactType,
-        artifactName,
-        environmentId: envId,
-        runtimeId,
-      }).then((d) => d.artifactParametersByComponent),
+      icpClient.get<GqlArtifactParam[]>('/artifacts/params', { componentId, artifactType, artifactName, environmentId: envId, runtimeId }),
     enabled: !!componentId && !!artifactType && !!artifactName && !!envId,
   });
 }
-
-const ARTIFACT_WSDL_QUERY = `
-  query ArtifactWsdl($componentId: String!, $artifactType: String!, $artifactName: String!, $environmentId: String, $runtimeId: String) {
-    artifactWsdlByComponent(
-      componentId: $componentId,
-      artifactType: $artifactType,
-      artifactName: $artifactName,
-      environmentId: $environmentId,
-      runtimeId: $runtimeId
-    )
-  }`;
 
 export function useArtifactWsdl(componentId: string, artifactType: string, artifactName: string, envId: string, runtimeId?: string) {
   return useQuery({
     queryKey: ['artifactWsdl', componentId, artifactType, artifactName, envId, runtimeId],
     queryFn: () =>
-      gql<{ artifactWsdlByComponent: string }>(ARTIFACT_WSDL_QUERY, {
-        componentId,
-        artifactType,
-        artifactName,
-        environmentId: envId,
-        runtimeId,
-      }).then((d) => d.artifactWsdlByComponent),
+      icpClient.get<string>('/artifacts/wsdl', { componentId, artifactType, artifactName, environmentId: envId, runtimeId }),
     enabled: !!componentId && !!artifactType && !!artifactName && !!envId,
   });
 }
@@ -615,6 +625,7 @@ export interface GqlRepository {
   bitbucketServerUrl?: string;
   serverUrl?: string;
   projectApp?: string;
+  treeUrl?: string;
 }
 
 export interface GqlCommit {
@@ -629,36 +640,22 @@ export interface GqlCommit {
   };
 }
 
-const COMPONENT_REPOSITORY_QUERY = `
-  query GetComponentRepository($projectId: String!, $componentHandler: String!) {
-    component(projectId: $projectId, componentHandler: $componentHandler) {
-      repository {
-        gitProvider, organizationApp, nameApp, branch, appSubPath,
-        bitbucketServerUrl, serverUrl, projectApp
-      }
-    }
-  }`;
-
 export function useComponentRepository(projectId: string, componentHandler: string) {
   return useQuery({
     queryKey: ['componentRepository', projectId, componentHandler],
-    queryFn: () => gql<{ component: { repository: GqlRepository } }>(COMPONENT_REPOSITORY_QUERY, { projectId, componentHandler }).then((d) => d.component?.repository ?? null),
+    queryFn: () =>
+      icpClient.get<GqlRepository>(`/components/${encodeURIComponent(componentHandler)}/repository`, { projectName: projectId }),
     enabled: !!projectId && !!componentHandler,
   });
 }
 
-const COMMIT_HISTORY_QUERY = `
-  query GetCommitHistory($componentId: String!, $branch: String!) {
-    commitHistory(componentId: $componentId, branch: $branch) {
-      sha, message, isLatest,
-      author { name, date, email, avatarUrl }
-    }
-  }`;
-
-export function useCommitHistory(componentId: string, branch: string) {
+export function useCommitHistory(componentId: string, branch: string, projectName?: string) {
   return useQuery({
     queryKey: ['commitHistory', componentId, branch],
-    queryFn: () => gql<{ commitHistory: GqlCommit[] }>(COMMIT_HISTORY_QUERY, { componentId, branch }).then((d) => d.commitHistory ?? []),
+    queryFn: () =>
+      icpClient
+        .get<{ items: GqlCommit[] }>(`/components/${encodeURIComponent(componentId)}/commit-history`, { branch, ...(projectName ? { projectName } : {}) })
+        .then((d) => d.items ?? []),
     enabled: !!componentId && !!branch,
   });
 }
@@ -673,19 +670,12 @@ export interface GqlExecutionConfigs {
   retryCount?: number;
 }
 
-const EXECUTION_CONFIGS_QUERY = `
-  query GetExecutionConfigs($componentId: String!, $releaseId: String!) {
-    executionConfigs(componentId: $componentId, releaseId: $releaseId) {
-      cronjobFrequency, cronjobTimezone, cronjobAllowConcurrency, timeoutSeconds, retryCount
-    }
-  }`;
-
 export function useExecutionConfigs(componentId: string, releaseId: string) {
   return useQuery({
     queryKey: ['executionConfigs', componentId, releaseId],
     queryFn: () =>
-      gql<{ executionConfigs: GqlExecutionConfigs }>(EXECUTION_CONFIGS_QUERY, { componentId, releaseId })
-        .then((d) => d.executionConfigs)
+      icpClient
+        .get<GqlExecutionConfigs>(`/components/${encodeURIComponent(componentId)}/execution-configs`, { releaseId })
         .catch(() => null),
     enabled: !!componentId && !!releaseId,
     retry: false,
@@ -701,21 +691,14 @@ export interface GqlComponentDeployment {
   build?: { buildId: string };
 }
 
-const COMPONENT_DEPLOYMENT_QUERY = `
-  query GetComponentDeployment($orgHandler: String!, $orgUuid: String!, $componentId: String!, $versionId: String!, $environmentId: String!) {
-    componentDeployment(orgHandler: $orgHandler, orgUuid: $orgUuid, componentId: $componentId, versionId: $versionId, environmentId: $environmentId) {
-      releaseId, cron, cronTimezone, build { buildId }
-    }
-  }`;
-
 export function useComponentDeployment(orgHandler: string, orgUuid: string, componentId: string, versionId: string, environmentId: string) {
   return useQuery({
     queryKey: ['componentDeployment', orgHandler, componentId, versionId, environmentId],
     queryFn: () =>
-      gql<{ componentDeployment: GqlComponentDeployment }>(COMPONENT_DEPLOYMENT_QUERY, { orgHandler, orgUuid, componentId, versionId, environmentId })
-        .then((d) => d.componentDeployment)
+      icpClient
+        .get<GqlComponentDeployment>(`/components/${encodeURIComponent(componentId)}/deployments`, { orgHandler, orgUuid, versionId, environmentId })
         .catch(() => null),
-    enabled: !!orgHandler && !!orgUuid && !!componentId && !!versionId && !!environmentId,
+    enabled: !!orgHandler && !!componentId && !!environmentId,
     retry: false,
   });
 }
@@ -735,23 +718,96 @@ export interface GqlDeploymentStatus {
   failureReason: number;
   sourceCommitId: string;
   buildRef?: string;
+  tasks?: BffWorkflowTask[];
 }
-
-const DEPLOYMENT_STATUS_QUERY = `
-  query GetDeploymentStatus($versionId: String!, $componentId: String!) {
-    deploymentStatusByVersion(versionId: $versionId, componentId: $componentId) {
-      id, sha, started_at, completed_at, status, conclusion, conclusionV2, isAutoDeploy, name, failureReason, sourceCommitId, buildRef
-    }
-  }`;
 
 export function useDeploymentStatus(componentId: string, versionId: string) {
   return useQuery({
     queryKey: ['deploymentStatus', componentId, versionId],
     queryFn: () =>
-      gql<{ deploymentStatusByVersion: GqlDeploymentStatus[] }>(DEPLOYMENT_STATUS_QUERY, { versionId, componentId })
-        .then((d) => d.deploymentStatusByVersion ?? [])
+      icpClient
+        .get<GqlDeploymentStatus[]>(`/components/${encodeURIComponent(componentId)}/deployments/status`, { versionId })
         .catch(() => []),
     enabled: !!componentId && !!versionId,
+    retry: false,
+    refetchInterval: 15000,
+  });
+}
+
+// ── Builds (OpenChoreo workflow runs) ──
+
+export interface BffWorkflowTask {
+  name: string;
+  phase: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface BffWorkflowRun {
+  name: string;
+  status: string;
+  startedAt: string;
+  completedAt: string;
+  componentName: string;
+  projectName: string;
+  image: string;
+  commit: string;
+  tasks?: BffWorkflowTask[];
+}
+
+interface BffWorkflowRunList {
+  items: BffWorkflowRun[];
+}
+
+/** Maps OpenChoreo workflow run status to the status/conclusion pair used by BuildCard. */
+function mapWorkflowRunToBuildInfo(run: BffWorkflowRun): GqlDeploymentStatus {
+  let status = 'queued';
+  let conclusion = '';
+
+  switch (run.status) {
+    case 'Running':
+      status = 'in_progress';
+      break;
+    case 'Succeeded':
+      status = 'completed';
+      conclusion = 'success';
+      break;
+    case 'Failed':
+      status = 'completed';
+      conclusion = 'failure';
+      break;
+    case 'Pending':
+    default:
+      status = 'queued';
+      break;
+  }
+
+  return {
+    id: 0,
+    sha: run.commit,
+    started_at: run.startedAt,
+    completed_at: run.completedAt,
+    status,
+    conclusion,
+    conclusionV2: conclusion,
+    isAutoDeploy: false,
+    name: run.name,
+    failureReason: 0,
+    sourceCommitId: run.commit,
+    buildRef: run.name,
+    tasks: run.tasks,
+  };
+}
+
+export function useBuilds(componentName: string, projectName: string) {
+  return useQuery({
+    queryKey: ['builds', componentName, projectName],
+    queryFn: () =>
+      icpClient
+        .get<BffWorkflowRunList>(`/components/${encodeURIComponent(componentName)}/builds`, { projectName })
+        .then((d) => (d.items ?? []).map(mapWorkflowRunToBuildInfo))
+        .catch(() => []),
+    enabled: !!componentName && !!projectName,
     retry: false,
     refetchInterval: 15000,
   });
@@ -785,17 +841,7 @@ export function useTaskExecutions(releaseId: string) {
   });
 }
 
-const EXECUTION_ARGUMENTS_QUERY = `
-  query GetExecutionArguments($id: String!, $componentId: String!, $releaseId: String!) {
-    execution(input: { id: $id, componentId: $componentId, releaseId: $releaseId }) {
-      arguments {
-        argumentName
-        argumentValue
-      }
-    }
-  }`;
-
-interface ExecutionArgument {
+export interface ExecutionArgument {
   argumentName: string;
   argumentValue: string;
 }
@@ -804,8 +850,9 @@ export function useExecutionArguments(runId: string, componentId: string, releas
   return useQuery({
     queryKey: ['executionArguments', runId, componentId, releaseId],
     queryFn: () =>
-      gql<{ execution: { arguments: ExecutionArgument[] } }>(EXECUTION_ARGUMENTS_QUERY, { id: runId, componentId, releaseId })
-        .then((d) => d.execution?.arguments ?? [])
+      icpClient
+        .get<ExecutionArgument[]>(`/components/${encodeURIComponent(componentId)}/executions/${encodeURIComponent(runId)}/arguments`, { releaseId })
+        .then((d) => d ?? [])
         .catch(() => []),
     enabled: enabled && !!runId && !!componentId && !!releaseId,
     retry: false,
@@ -863,6 +910,63 @@ export function useTaskExecutionCount(releaseId: string) {
   });
 }
 
+// ── Schedule (REST — replaces useComponentDeployment + useExecutionConfigs for automation) ──
+
+export interface BffSchedule {
+  environment: string;
+  componentName?: string;
+  projectName?: string;
+  cronExpression: string;
+  state: string;
+  imagePullPolicy?: string;
+  releaseName?: string;
+  backoffLimit?: number | null;
+  activeDeadlineSeconds?: number | null;
+}
+
+export function useSchedule(componentId: string, envId: string, projectId: string) {
+  return useQuery({
+    queryKey: ['schedule', componentId, envId],
+    queryFn: () =>
+      icpClient
+        .get<BffSchedule>(
+          `/components/${encodeURIComponent(componentId)}/schedules/${encodeURIComponent(envId)}`,
+          { projectName: projectId },
+        )
+        .catch(() => null),
+    enabled: !!componentId && !!envId && !!projectId,
+    retry: false,
+  });
+}
+
+// ── Executions (REST — replaces useTaskExecutions) ──
+
+export interface BffExecution {
+  jobId: string;
+  status: string;
+  startTime?: string;
+  completionTime?: string;
+  revisionId?: string;
+}
+
+export function useExecutions(componentId: string, envId: string, projectId: string) {
+  return useQuery({
+    queryKey: ['executions', componentId, envId],
+    queryFn: () =>
+      icpClient
+        .get<{ items: BffExecution[] }>(
+          `/components/${encodeURIComponent(componentId)}/schedules/${encodeURIComponent(envId)}/executions`,
+          { projectName: projectId },
+        )
+        .then((d) => d.items ?? [])
+        .catch(() => []),
+    enabled: !!componentId && !!envId && !!projectId,
+    retry: false,
+    staleTime: 0,
+    refetchInterval: 15000,
+  });
+}
+
 // ── Schema-based configurable values ──
 
 export interface SchemaConfigValue {
@@ -888,7 +992,7 @@ export function useSchemaConfig(projectId: string, componentId: string, envId: s
   return useQuery({
     queryKey: ['schemaConfig', projectId, componentId, envId, deploymentTrackId, commitHash],
     queryFn: async (): Promise<SchemaConfigData | null> => {
-      const base = new URL(window.API_CONFIG.graphqlUrl).origin;
+      const base = new URL(window.API_CONFIG?.graphqlUrl ?? '').origin;
       const qs = commitHash ? `?commitHash=${encodeURIComponent(commitHash)}` : '';
       const url = `${base}/configuration-schema/v1.0/projects/${projectId}/components/${componentId}/env-template/${envId}/deployment-track/${deploymentTrackId}/configurations${qs}`;
       const res = await authenticatedFetch(url);
@@ -919,4 +1023,156 @@ export function useRefreshEnvironmentArtifacts() {
       }),
     ]);
   };
+}
+
+// ── Resource Tree APIs (OpenChoreo ReleaseBinding resource tree) ──
+
+export interface ResourceRef {
+  group?: string;
+  version: string;
+  kind: string;
+  namespace?: string;
+  name: string;
+  uid: string;
+}
+
+export interface HealthInfo {
+  status: string;
+  message?: string;
+}
+
+export interface ResourceNode {
+  group?: string;
+  version: string;
+  kind: string;
+  namespace?: string;
+  name: string;
+  uid: string;
+  resourceVersion?: string;
+  createdAt?: string;
+  parentRefs?: ResourceRef[];
+  object?: Record<string, unknown>;
+  health?: HealthInfo;
+}
+
+export interface ReleaseResourceTree {
+  name: string;
+  targetPlane: string;
+  nodes: ResourceNode[];
+}
+
+export interface ResourceTreeResponse {
+  renderedReleases: ReleaseResourceTree[];
+}
+
+export function useResourceTree(componentId: string, envId: string) {
+  return useQuery({
+    queryKey: ['resourceTree', componentId, envId],
+    queryFn: () =>
+      icpClient
+        .get<ResourceTreeResponse>(
+          `/components/${encodeURIComponent(componentId)}/environments/${encodeURIComponent(envId)}/resource-tree`,
+        )
+        .catch(() => null),
+    enabled: !!componentId && !!envId,
+    retry: false,
+    staleTime: 15000,
+  });
+}
+
+export function useResourceTreeExecutions(componentId: string, envId: string) {
+  return useQuery({
+    queryKey: ['resourceTreeExecutions', componentId, envId],
+    queryFn: () =>
+      icpClient
+        .get<{ items: BffExecution[] }>(
+          `/components/${encodeURIComponent(componentId)}/environments/${encodeURIComponent(envId)}/resource-tree/executions`,
+        )
+        .then((d) => d.items ?? [])
+        .catch(() => []),
+    enabled: !!componentId && !!envId,
+    retry: false,
+    staleTime: 0,
+    refetchInterval: 15000,
+  });
+}
+
+export interface BffResourceEvent {
+  type: string;
+  reason: string;
+  message: string;
+  count?: number;
+  firstTimestamp?: string;
+  lastTimestamp?: string;
+  source?: string;
+}
+
+export function useResourceEvents(componentId: string, envId: string, version: string, kind: string, name: string, group?: string, enabled = true) {
+  return useQuery({
+    queryKey: ['resourceEvents', componentId, envId, group, version, kind, name],
+    queryFn: () => {
+      const params: Record<string, string> = { version, kind, name };
+      if (group) params.group = group;
+      return icpClient
+        .get<{ events: BffResourceEvent[] }>(
+          `/components/${encodeURIComponent(componentId)}/environments/${encodeURIComponent(envId)}/resource-events`,
+          params,
+        )
+        .then((d) => d.events ?? [])
+        .catch(() => []);
+    },
+    enabled: enabled && !!componentId && !!envId && !!version && !!kind && !!name,
+    retry: false,
+    staleTime: 15000,
+  });
+}
+
+export interface BffPodLogEntry {
+  timestamp: string;
+  log: string;
+}
+
+export function useResourceLogs(componentId: string, envId: string, podName: string, sinceSeconds?: number, enabled = true) {
+  return useQuery({
+    queryKey: ['resourceLogs', componentId, envId, podName, sinceSeconds],
+    queryFn: () => {
+      const params: Record<string, string> = { podName };
+      if (sinceSeconds !== undefined) params.sinceSeconds = String(sinceSeconds);
+      return icpClient
+        .get<{ logEntries: BffPodLogEntry[] }>(
+          `/components/${encodeURIComponent(componentId)}/environments/${encodeURIComponent(envId)}/resource-logs`,
+          params,
+        )
+        .then((d) => d.logEntries ?? [])
+        .catch(() => []);
+    },
+    enabled: enabled && !!componentId && !!envId && !!podName,
+    retry: false,
+    staleTime: 30000,
+  });
+}
+
+/**
+ * Helper: finds the pod name for a given job from the resource tree.
+ * Looks for a Pod node whose parentRefs include the Job node's UID.
+ */
+export function findPodForJob(tree: ResourceTreeResponse | null | undefined, jobId: string): string | null {
+  if (!tree) return null;
+  for (const release of tree.renderedReleases) {
+    const jobNode = release.nodes.find((n) => n.kind === 'Job' && n.name === jobId);
+    if (!jobNode) continue;
+    const pod = release.nodes.find((n) => n.kind === 'Pod' && n.parentRefs?.some((ref) => ref.uid === jobNode.uid));
+    if (pod) return pod.name;
+  }
+  return null;
+}
+
+/**
+ * Fetches pod logs for a specific job by first resolving the pod name from the resource tree.
+ */
+export function useJobPodLogs(componentId: string, envId: string, jobId: string, enabled = true) {
+  const { data: tree } = useResourceTree(enabled ? componentId : '', enabled ? envId : '');
+  const podName = findPodForJob(tree, jobId);
+
+  return useResourceLogs(componentId, envId, podName ?? '', undefined, enabled && !!podName);
 }

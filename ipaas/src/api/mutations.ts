@@ -17,9 +17,10 @@
  */
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { gql } from './graphql';
 import { authenticatedFetch, refreshAccessToken } from '../auth/tokenManager';
-import type { GqlArtifact, GqlComponent, GqlEnvironment, GqlProject, SchemaConfigItem } from './queries';
+import type { GqlArtifact, GqlComponent, GqlEnvironment } from './queries';
+import { icpClient } from './client';
+import { mapComponent, mapEnvironment, mapProject, type BffComponent, type BffEnvironment, type BffExecution, type BffProject, type BffSchedule, type SchemaConfigItem } from './queries';
 import { toBackendArtifactType } from './artifactToggleMutations';
 
 export interface CreateProjectInput {
@@ -29,33 +30,18 @@ export interface CreateProjectInput {
   orgHandler: string;
 }
 
-const CREATE_PROJECT = `
-  mutation CreateProject($name: String!, $description: String!, $projectHandler: String!, $orgHandler: String!, $orgId: Int!) {
-    createProject(project: {
-      name: $name,
-      description: $description,
-      projectHandler: $projectHandler,
-      orgId: $orgId,
-      orgHandler: $orgHandler,
-      version: "1.0.0"
-    }) {
-      id, orgId, name, version, createdDate, handler, region,
-      description, defaultDeploymentPipelineId, deploymentPipelineIds,
-      type, updatedAt
-    }
-  }`;
-
 export function useCreateProject() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateProjectInput) =>
-      gql<{ createProject: GqlProject }>(CREATE_PROJECT, {
-        name: input.name,
-        description: input.description,
-        projectHandler: input.handler,
-        orgHandler: input.orgHandler,
-        orgId: window.API_CONFIG.asgardeoOrgNumericId,
-      }).then((d) => d.createProject),
+      icpClient
+        .post<BffProject>('/projects', {
+          name: input.handler,        // K8s resource name (slug)
+          displayName: input.name,    // human-readable display name
+          description: input.description,
+          deploymentPipeline: 'default',
+        })
+        .then(mapProject),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['projects'] }),
   });
 }
@@ -68,29 +54,11 @@ export interface EnvironmentInput {
   critical: boolean;
 }
 
-const CREATE_ENVIRONMENT = `
-  mutation CreateEnvironment($name: String!, $description: String!, $critical: Boolean!) {
-    createEnvironment(environment: { name: $name, description: $description, critical: $critical }) {
-      id, name, description, critical, createdAt
-    }
-  }`;
-
-const UPDATE_ENVIRONMENT = `
-  mutation UpdateEnvironment($environmentId: String!, $name: String!, $description: String!, $critical: Boolean!) {
-    updateEnvironment(environmentId: $environmentId, name: $name, description: $description, critical: $critical) {
-      id, name, description, critical, createdAt
-    }
-  }`;
-
-const DELETE_ENVIRONMENT = `
-  mutation DeleteEnvironment($environmentId: String!) {
-    deleteEnvironment(environmentId: $environmentId)
-  }`;
-
 export function useCreateEnvironment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: EnvironmentInput) => gql<{ createEnvironment: GqlEnvironment }>(CREATE_ENVIRONMENT, { ...input }).then((d) => d.createEnvironment),
+    mutationFn: (input: EnvironmentInput) =>
+      icpClient.post<BffEnvironment>('/environments', { name: input.name, displayName: input.name, description: input.description, isProduction: input.critical }).then(mapEnvironment),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['environments'] }),
   });
 }
@@ -98,7 +66,8 @@ export function useCreateEnvironment() {
 export function useUpdateEnvironment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: EnvironmentInput & { environmentId: string }) => gql<{ updateEnvironment: GqlEnvironment }>(UPDATE_ENVIRONMENT, { ...input }).then((d) => d.updateEnvironment),
+    mutationFn: (input: EnvironmentInput & { environmentId: string }) =>
+      icpClient.put<BffEnvironment>(`/environments/${encodeURIComponent(input.environmentId)}`, { displayName: input.name, isProduction: input.critical }).then(mapEnvironment),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['environments'] }),
   });
 }
@@ -106,20 +75,16 @@ export function useUpdateEnvironment() {
 export function useDeleteEnvironment() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (environmentId: string) => gql<{ deleteEnvironment: string }>(DELETE_ENVIRONMENT, { environmentId }),
+    mutationFn: (environmentId: string) => icpClient.delete<void>(`/environments/${encodeURIComponent(environmentId)}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['environments'] }),
   });
 }
 
-const DELETE_RUNTIME = `
-  mutation DeleteRuntime($runtimeId: String!) {
-    deleteRuntime(runtimeId: $runtimeId)
-  }`;
-
 export function useDeleteRuntime() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ runtimeId }: { runtimeId: string; envId: string; projectId: string }) => gql<{ deleteRuntime: string }>(DELETE_RUNTIME, { runtimeId }),
+    mutationFn: ({ runtimeId }: { runtimeId: string; envId: string; projectId: string }) =>
+      icpClient.delete<void>(`/runtimes/${encodeURIComponent(runtimeId)}`),
     onSuccess: (_, { envId, projectId }) => {
       qc.invalidateQueries({ queryKey: ['runtimes'] });
       qc.invalidateQueries({ queryKey: ['projectRuntimes', envId, projectId] });
@@ -128,20 +93,6 @@ export function useDeleteRuntime() {
 }
 
 // ── Artifact status toggle ──
-
-const UPDATE_ARTIFACT_STATUS = `
-  mutation UpdateArtifactStatus($input: ArtifactStatusChangeInput!) {
-    updateArtifactStatus(input: $input) {
-      status, message, successCount, failedCount, details
-    }
-  }`;
-
-const UPDATE_LISTENER_STATE = `
-  mutation UpdateListenerState($input: ListenerControlInput!) {
-    updateListenerState(input: $input) {
-      success, message, commandIds
-    }
-  }`;
 
 export interface ArtifactStatusInput {
   envId: string;
@@ -165,55 +116,67 @@ export interface CreateComponentInput {
   description: string;
   orgHandler: string;
   projectId: string;
-  componentType: 'MI' | 'BI';
+  buildpackType: 'MI' | 'BI';
+  componentType: string;
 }
 
-const CREATE_COMPONENT = `
-  mutation CreateComponent($component: ComponentInput!) {
-    createComponent(component: $component) {
-      id, name, displayName, handler, orgId, projectId, createdAt, updatedAt
-    }
-  }`;
+interface CreateComponentResponse {
+  component: BffComponent;
+}
+
+// Maps frontend componentType to OpenChoreo ClusterComponentType name.
+const COMPONENT_TYPE_SPEC: Record<string, string> = {
+  automation: 'deployment/scheduled-task',
+  service: 'deployment/service',
+  aiAgent: 'deployment/ai-agent',
+  eventIntegration: 'deployment/event-integration',
+  fileIntegration: 'deployment/file-integration',
+  proxy: 'deployment/proxy',
+};
+
+// Maps frontend buildpackType to OpenChoreo ClusterWorkflow name.
+const WORKFLOW_NAME: Record<string, string> = {
+  MI: 'mi-buildpack-builder',
+  BI: 'ballerina-buildpack-builder',
+};
 
 export function useCreateComponent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: CreateComponentInput) =>
-      gql<{ createComponent: GqlComponent }>(CREATE_COMPONENT, {
-        component: {
-          name: input.name,
-          displayName: input.displayName,
-          description: input.description,
-          orgId: window.API_CONFIG.asgardeoOrgNumericId,
-          orgHandler: input.orgHandler,
-          projectId: input.projectId,
-          componentType: input.componentType,
-          technology: 'WSO2MI',
-          isPublicRepo: false,
-        },
-      }).then((d) => d.createComponent),
+      icpClient
+        .post<CreateComponentResponse>('/components', {
+          metadata: {
+            name: input.name,
+            annotations: {
+              'core.choreo.dev/display-name': input.displayName,
+              'core.choreo.dev/description': input.description,
+            },
+          },
+          spec: {
+            owner: { projectName: input.projectId },
+            componentType: {
+              kind: 'ClusterComponentType',
+              name: COMPONENT_TYPE_SPEC[input.componentType] ?? input.componentType,
+            },
+            autoBuild: true,
+            autoDeploy: false,
+            workflow: {
+              kind: 'ClusterWorkflow',
+              name: WORKFLOW_NAME[input.buildpackType] ?? input.buildpackType,
+            },
+          },
+        })
+        .then((d) => mapComponent(d.component)),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['components'] }),
   });
 }
 
-interface DeleteComponentResult {
-  status: string;
-  canDelete: boolean;
-  message: string;
-  encodedData: string;
-}
-
-const DELETE_COMPONENT_V2 = `
-  mutation DeleteComponentV2($orgHandler: String!, $componentId: String!, $projectId: String!) {
-    deleteComponentV2(orgHandler: $orgHandler, componentId: $componentId, projectId: $projectId) {
-      status, canDelete, message, encodedData
-    }
-  }`;
-
 export function useDeleteComponent() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { orgHandler: string; componentId: string; projectId: string }) => gql<{ deleteComponentV2: DeleteComponentResult }>(DELETE_COMPONENT_V2, input).then((d) => d.deleteComponentV2),
+    mutationFn: (input: { orgHandler: string; componentId: string; projectId: string }) =>
+      icpClient.delete<void>(`/components/${encodeURIComponent(input.componentId)}?projectName=${encodeURIComponent(input.projectId)}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['components'] }),
   });
 }
@@ -222,9 +185,12 @@ export function useUpdateArtifactStatus() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ArtifactStatusInput) =>
-      gql<{ updateArtifactStatus: { status: string; message: string } }>(UPDATE_ARTIFACT_STATUS, {
-        input: { componentId: input.componentId, artifactType: toBackendArtifactType(input.artifactType), artifactName: input.artifactName, status: input.status },
-      }).then((d) => d.updateArtifactStatus),
+      icpClient.put<{ status: string; message: string }>('/artifacts/status', {
+        componentId: input.componentId,
+        artifactType: toBackendArtifactType(input.artifactType),
+        artifactName: input.artifactName,
+        status: input.status,
+      }),
     onMutate: async (input) => {
       const scope = (q: { queryKey: readonly unknown[] }) => q.queryKey[2] === input.envId && q.queryKey[3] === input.componentId;
       await qc.cancelQueries({ queryKey: ['artifacts', input.artifactType], predicate: scope });
@@ -251,13 +217,11 @@ export function useUpdateListenerState() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: ListenerStateInput) =>
-      gql<{ updateListenerState: { success: boolean; message: string; commandIds: string[] } }>(UPDATE_LISTENER_STATE, {
-        input: {
-          runtimeIds: input.runtimeIds,
-          listenerName: input.listenerName,
-          action: input.action,
-        },
-      }).then((d) => d.updateListenerState),
+      icpClient.put<{ success: boolean; message: string; commandIds: string[] }>('/artifacts/listener-state', {
+        runtimeIds: input.runtimeIds,
+        listenerName: input.listenerName,
+        action: input.action,
+      }),
     onSuccess: () => {
       // Invalidate all listener queries to refetch the updated state
       qc.invalidateQueries({ queryKey: ['artifacts', 'Listener'] });
@@ -273,24 +237,14 @@ export interface UpdateLogLevelInput {
   logLevel: 'INFO' | 'DEBUG' | 'WARN' | 'ERROR';
 }
 
-const UPDATE_LOG_LEVEL = `
-  mutation UpdateLogLevel($input: UpdateLogLevelInput!) {
-    updateLogLevel(input: $input) {
-      success, message, commandIds
-    }
-  }`;
-
 export function useUpdateLogLevel() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdateLogLevelInput) =>
-      gql<{ updateLogLevel: { success: boolean; message: string; commandIds: string[] } }>(UPDATE_LOG_LEVEL, {
-        input: {
-          runtimeIds: input.runtimeIds,
-          componentName: input.componentName,
-          logLevel: input.logLevel,
-        },
-      }).then((d) => d.updateLogLevel),
+      icpClient.put<{ success: boolean; message: string; commandIds: string[] }>(
+        `/components/${encodeURIComponent(input.componentName)}/loggers`,
+        { runtimeIds: input.runtimeIds, componentName: input.componentName, logLevel: input.logLevel },
+      ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['loggers'] });
     },
@@ -299,42 +253,25 @@ export function useUpdateLogLevel() {
 
 // ── Component-Environment JWT Secrets ──
 
-const GET_OR_GENERATE_COMPONENT_ENV_JWT_SECRET = `
-  mutation GenerateComponentEnvironmentJwtSecret($componentId: String!, $environmentId: String!) {
-    generateComponentEnvironmentJwtSecret(componentId: $componentId, environmentId: $environmentId)
-  }`;
-
-const ROTATE_COMPONENT_ENV_JWT_SECRET = `
-  mutation RotateComponentEnvironmentJwtSecret($componentId: String!, $environmentId: String!) {
-    rotateComponentEnvironmentJwtSecret(componentId: $componentId, environmentId: $environmentId)
-  }`;
-
 export function useGenerateComponentEnvironmentJwtSecret() {
   return useMutation({
     mutationFn: ({ componentId, environmentId }: { componentId: string; environmentId: string }) =>
-      gql<{ generateComponentEnvironmentJwtSecret: string }>(GET_OR_GENERATE_COMPONENT_ENV_JWT_SECRET, {
-        componentId,
-        environmentId,
-      }).then((d) => d.generateComponentEnvironmentJwtSecret),
+      icpClient
+        .post<{ secret: string }>(`/components/${encodeURIComponent(componentId)}/environments/${encodeURIComponent(environmentId)}/jwt-secret`)
+        .then((d) => d.secret),
   });
 }
 
 export function useRotateComponentEnvironmentJwtSecret() {
   return useMutation({
     mutationFn: ({ componentId, environmentId }: { componentId: string; environmentId: string }) =>
-      gql<{ rotateComponentEnvironmentJwtSecret: string }>(ROTATE_COMPONENT_ENV_JWT_SECRET, {
-        componentId,
-        environmentId,
-      }).then((d) => d.rotateComponentEnvironmentJwtSecret),
+      icpClient
+        .put<{ secret: string }>(`/components/${encodeURIComponent(componentId)}/environments/${encodeURIComponent(environmentId)}/jwt-secret/rotate`)
+        .then((d) => d.secret),
   });
 }
 
 // ── Schedule / Job Configs ──
-
-const UPDATE_JOB_CONFIGS = `
-  mutation UpdateJobConfigs($input: JobConfigInput!) {
-    updateJobConfigs(input: $input)
-  }`;
 
 export interface UpdateJobConfigsInput {
   orgHandler: string;
@@ -351,7 +288,8 @@ export interface UpdateJobConfigsInput {
 export function useUpdateJobConfigs() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: UpdateJobConfigsInput) => gql<{ updateJobConfigs: boolean }>(UPDATE_JOB_CONFIGS, { input }).then((d) => d.updateJobConfigs),
+    mutationFn: (input: UpdateJobConfigsInput) =>
+      icpClient.put<{ success: boolean }>(`/components/${encodeURIComponent(input.componentId)}/job-configs`, input).then((d) => d.success),
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ['executionConfigs', input.componentId] });
     },
@@ -359,13 +297,6 @@ export function useUpdateJobConfigs() {
 }
 
 // ── Task trigger ──
-
-const TRIGGER_ARTIFACT = `
-  mutation TriggerTask($input: ArtifactTriggerInput!) {
-    triggerArtifact(input: $input) {
-      status, message, successCount, failedCount, details
-    }
-  }`;
 
 export interface TriggerTaskInput {
   componentId: string;
@@ -376,12 +307,10 @@ export function useTriggerTask() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: TriggerTaskInput) =>
-      gql<{ triggerArtifact: { status: string; message: string; successCount: number; failedCount: number; details: string[] } }>(TRIGGER_ARTIFACT, {
-        input: {
-          componentId: input.componentId,
-          taskName: input.taskName,
-        },
-      }).then((d) => d.triggerArtifact),
+      icpClient.post<{ status: string; message: string; successCount: number; failedCount: number; details: string[] }>('/artifacts/trigger', {
+        componentId: input.componentId,
+        taskName: input.taskName,
+      }),
     onSuccess: () => {
       // Invalidate task queries to refetch the updated state
       qc.invalidateQueries({ queryKey: ['artifacts', 'Task'] });
@@ -391,13 +320,9 @@ export function useTriggerTask() {
 
 // ── Deploy deployment track (triggers automation execution) ──
 
-const DEPLOY_DEPLOYMENT_TRACK = `
-  mutation deployDeploymentTrack($input: DeployDeploymentTrackInput!) {
-    deployDeploymentTrack(input: $input)
-  }`;
-
 export interface DeployDeploymentTrackInput {
   componentId: string;
+  projectName?: string;
   id: string;
   imageId: string;
   environmentId: string;
@@ -411,7 +336,12 @@ export interface DeployDeploymentTrackInput {
 export function useDeployDeploymentTrack() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: DeployDeploymentTrackInput) => gql<{ deployDeploymentTrack: string }>(DEPLOY_DEPLOYMENT_TRACK, { input }).then((d) => d.deployDeploymentTrack),
+    mutationFn: (input: DeployDeploymentTrackInput) =>
+      icpClient.post<string>(
+        `/components/${encodeURIComponent(input.componentId)}/deployments`,
+        input,
+        { projectName: input.projectName },
+      ),
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ['deploymentStatus', input.componentId, input.id] });
       qc.invalidateQueries({ queryKey: ['executionConfigs', input.componentId] });
@@ -420,15 +350,35 @@ export function useDeployDeploymentTrack() {
   });
 }
 
-// ── Promote ──
+// ── Deploy to environment (auto-deploy after build success) ──
 
-const PROMOTE_MUTATION = `
-  mutation promote($componentId: String!, $promoteSchema: Promote!) {
-    promote(componentId: $componentId, promoteSchema: $promoteSchema)
-  }`;
+export interface DeployComponentInput {
+  componentId: string;
+  projectName: string;
+  environment?: string;
+}
+
+export function useDeployComponent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DeployComponentInput) =>
+      icpClient.post<{ releaseId: string; cron: string; cronTimezone: string }>(
+        `/components/${encodeURIComponent(input.componentId)}/deploy`,
+        {},
+        { projectName: input.projectName, environment: input.environment ?? 'development' },
+      ),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: ['componentDeployment'] });
+      qc.invalidateQueries({ queryKey: ['executionConfigs', input.componentId] });
+    },
+  });
+}
+
+// ── Promote ──
 
 export interface PromoteInput {
   componentId: string;
+  projectName: string;
   apiVersionId: string;
   sourceReleaseId: string;
   targetEnvironmentId: string;
@@ -439,16 +389,16 @@ export function usePromote() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: PromoteInput) =>
-      gql<{ promote: string }>(PROMOTE_MUTATION, {
-        componentId: input.componentId,
-        promoteSchema: {
+      icpClient.post<string>(
+        `/components/${encodeURIComponent(input.componentId)}/deployments/promote`,
+        {
           apiVersionId: input.apiVersionId,
           sourceReleaseId: input.sourceReleaseId,
           targetEnvironmentId: input.targetEnvironmentId,
           deploymentPipelineId: input.deploymentPipelineId,
-          jobRetryCount: 0,
         },
-      }).then((d) => d.promote),
+        { projectName: input.projectName },
+      ),
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ['componentDeployment'] });
       qc.invalidateQueries({ queryKey: ['deploymentStatus', input.componentId] });
@@ -458,28 +408,21 @@ export function usePromote() {
 
 // ── Stop Deployment (clears cron schedule) ──
 
-const STOP_DEPLOYMENT = `
-  mutation StopDeployment($orgHandler: String!, $componentId: String!, $releaseId: String!, $type: String!, $clearCron: Boolean!) {
-    stopDeployment(orgHandler: $orgHandler, componentId: $componentId, releaseId: $releaseId, type: $type, clearCron: $clearCron)
-  }`;
-
 export interface StopDeploymentInput {
   orgHandler: string;
   componentId: string;
   releaseId: string;
+  environment: string;
 }
 
 export function useStopDeployment() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: StopDeploymentInput) =>
-      gql<{ stopDeployment: string }>(STOP_DEPLOYMENT, {
-        orgHandler: input.orgHandler,
-        componentId: input.componentId,
-        releaseId: input.releaseId,
-        type: 'scheduledTask',
-        clearCron: true,
-      }).then((d) => d.stopDeployment),
+      icpClient.delete<string>(
+        `/components/${encodeURIComponent(input.componentId)}/deployments`,
+        { orgHandler: input.orgHandler, componentId: input.componentId, releaseId: input.releaseId, environment: input.environment },
+      ),
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ['executionConfigs', input.componentId] });
       qc.invalidateQueries({ queryKey: ['componentDeployment'] });
@@ -488,20 +431,6 @@ export function useStopDeployment() {
 }
 
 // ── Update component display name ──
-
-const UPDATE_COMPONENT = `
-  mutation UpdateComponent($id: String!, $displayName: String!, $description: String!, $version: String!, $labels: String!) {
-    updateComponent(component: {
-      id: $id,
-      displayName: $displayName,
-      description: $description,
-      version: $version,
-      labels: $labels,
-      serviceAccessMode: "null",
-    }) {
-      id, name, handler, description, displayType, displayName, version, labels, createdAt, updatedAt, projectId
-    }
-  }`;
 
 export interface UpdateComponentInput {
   id: string;
@@ -517,13 +446,12 @@ export function useUpdateComponent() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (input: UpdateComponentInput) =>
-      gql<{ updateComponent: GqlComponent }>(UPDATE_COMPONENT, {
-        id: input.id,
-        displayName: input.displayName,
-        description: input.description,
-        version: input.version,
-        labels: input.labels ?? '',
-      }).then((d) => d.updateComponent),
+      icpClient
+        .put<BffComponent>(`/components/${encodeURIComponent(input.id)}?projectName=${encodeURIComponent(input.projectId)}`, {
+          displayName: input.displayName,
+          description: input.description,
+        })
+        .then(mapComponent),
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ['component', input.projectId, input.handler] });
       qc.invalidateQueries({ queryKey: ['components'] });
@@ -621,6 +549,84 @@ export function useTriggerComponent() {
     },
     onSuccess: (_data, input) => {
       qc.invalidateQueries({ queryKey: ['taskExecutions', input.releaseId] });
+    },
+  });
+}
+
+// ── Schedule REST mutations ──
+
+export interface UpsertScheduleInput {
+  componentId: string;
+  projectId: string;
+  environment: string;
+  cronExpression: string;
+  state?: string;
+  backoffLimit?: number;
+  activeDeadlineSeconds?: number;
+}
+
+export function useUpsertSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: UpsertScheduleInput) =>
+      icpClient.post<BffSchedule>(
+        `/components/${encodeURIComponent(input.componentId)}/schedules`,
+        {
+          environment: input.environment,
+          cronExpression: input.cronExpression,
+          state: input.state ?? 'Active',
+          backoffLimit: input.backoffLimit,
+          activeDeadlineSeconds: input.activeDeadlineSeconds,
+        },
+        { projectName: input.projectId },
+      ),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: ['schedule', input.componentId, input.environment] });
+      qc.invalidateQueries({ queryKey: ['componentDeployment'] });
+      qc.invalidateQueries({ queryKey: ['executions', input.componentId, input.environment] });
+    },
+  });
+}
+
+export interface DeleteScheduleInput {
+  componentId: string;
+  projectId: string;
+  environment: string;
+}
+
+export function useDeleteSchedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: DeleteScheduleInput) =>
+      icpClient.delete<void>(
+        `/components/${encodeURIComponent(input.componentId)}/schedules/${encodeURIComponent(input.environment)}?projectName=${encodeURIComponent(input.projectId)}`,
+      ),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: ['schedule', input.componentId, input.environment] });
+      qc.invalidateQueries({ queryKey: ['componentDeployment'] });
+    },
+  });
+}
+
+export interface TriggerExecutionInput {
+  componentId: string;
+  projectId: string;
+  environment: string;
+}
+
+export function useTriggerExecution() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: TriggerExecutionInput) =>
+      icpClient.post<BffExecution>(
+        `/components/${encodeURIComponent(input.componentId)}/schedules/${encodeURIComponent(input.environment)}/executions`,
+        {},
+        { projectName: input.projectId },
+      ),
+    onSuccess: (_data, input) => {
+      qc.invalidateQueries({ queryKey: ['executions', input.componentId, input.environment] });
+      qc.invalidateQueries({ queryKey: ['resourceTreeExecutions', input.componentId, input.environment] });
+      qc.invalidateQueries({ queryKey: ['resourceTree', input.componentId, input.environment] });
     },
   });
 }

@@ -20,14 +20,13 @@ import { Box, Button, Checkbox, CircularProgress, Drawer, FormControlLabel, Icon
 import { RefreshCcw, Search, X } from '@wso2/oxygen-ui-icons-react';
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useExecutionLogs } from '../../api/queries';
+import { useJobPodLogs } from '../../api/queries';
 
 interface LogsDrawerProps {
   open: boolean;
   onClose: () => void;
   executionId: string;
   componentId: string;
-  deploymentTrackId: string;
   environmentId: string;
 }
 
@@ -57,9 +56,10 @@ const drawerSx = {
   },
 } as const;
 
-export default function LogsDrawer({ open, onClose, executionId, componentId, deploymentTrackId, environmentId }: LogsDrawerProps) {
+export default function LogsDrawer({ open, onClose, executionId, componentId, environmentId }: LogsDrawerProps) {
   const queryClient = useQueryClient();
-  const { data: logs = [], isLoading } = useExecutionLogs(componentId, deploymentTrackId, executionId, environmentId, open && !!executionId);
+  const { data: rawLogs = [], isLoading } = useJobPodLogs(componentId, environmentId, executionId, open && !!executionId);
+  const logs = rawLogs.map((e) => ({ timestamp: e.timestamp, message: e.log }));
   const [search, setSearch] = useState('');
   const [filterMode, setFilterMode] = useState(false);
 
@@ -69,7 +69,8 @@ export default function LogsDrawer({ open, onClose, executionId, componentId, de
   };
 
   const handleRefresh = () => {
-    queryClient.invalidateQueries({ queryKey: ['executionLogs', componentId, deploymentTrackId, executionId, environmentId] });
+    queryClient.invalidateQueries({ queryKey: ['resourceLogs'] });
+    queryClient.invalidateQueries({ queryKey: ['resourceTree', componentId, environmentId] });
   };
 
   const filtered = useMemo(() => {
