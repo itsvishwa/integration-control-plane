@@ -30,7 +30,7 @@ function createDbClient() returns sql:Client|error {
 }
 
 // Aliases come from the top-level [secrets] table (the one the cipher tool encrypts), with
-// [icp_server.storage.secrets] taking precedence. The config file is read only when an alias is used.
+// [icp_server.storage.secrets] taking precedence. The TOML config is read only when an alias is used.
 function resolveSecretsTable() returns map<string>|error {
     if !utils:isSecretAlias(dbUser) && !utils:isSecretAlias(dbPassword) {
         return secrets;
