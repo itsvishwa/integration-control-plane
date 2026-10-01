@@ -16,6 +16,7 @@
 
 import ballerina/crypto;
 import ballerina/file;
+import ballerina/io;
 import ballerina/os;
 import ballerina/lang.array;
 import ballerina/log;
@@ -65,7 +66,7 @@ function resolvePassword(string envVar, string fallback, string errorMsg) return
 // Resolves a configurable value that may reference an encrypted secret.
 // If configValue matches "$secret{alias}", looks up alias in secrets, decrypts, and returns the plaintext.
 public isolated function resolveConfig(string configValue, map<string> secrets) returns string|error {
-    if configValue.startsWith(CIPHER_SECRET_PREFIX) && configValue.endsWith(CIPHER_SECRET_SUFFIX) {
+    if isSecretAlias(configValue) {
         string alias = configValue.substring(CIPHER_SECRET_PREFIX.length(), configValue.length() - CIPHER_SECRET_SUFFIX.length());
         string? encrypted = secrets[alias];
         if encrypted is () {
@@ -77,6 +78,77 @@ public isolated function resolveConfig(string configValue, map<string> secrets) 
         return decryptedValue;
     }
     return configValue;
+}
+
+// Returns true if configValue is a "$secret{alias}" reference.
+public isolated function isSecretAlias(string configValue) returns boolean {
+    return configValue.startsWith(CIPHER_SECRET_PREFIX) && configValue.endsWith(CIPHER_SECRET_SUFFIX);
+}
+
+// Reads the top-level [secrets] table from the TOML files ICP was started with (BAL_CONFIG_FILES,
+// or ./Config.toml when unset). The WSO2 cipher tool only encrypts a top-level [secrets] table, and
+// Ballerina binds that table only to the root module's `secrets` configurable, so non-root modules
+// use this to resolve the same aliases. Only string values (base64 cipher text) are read.
+public function readTopLevelSecrets() returns map<string>|error {
+    string configFiles = os:getEnv("BAL_CONFIG_FILES");
+    string[] paths = configFiles == ""
+        ? ["Config.toml"]
+        : re `${os:getEnv("OS") == "Windows_NT" ? ";" : ":"}`.split(configFiles);
+    map<string> result = {};
+    foreach string path in paths {
+        if path.trim() == "" || !check file:test(path, file:EXISTS) {
+            continue;
+        }
+        foreach [string, string] [alias, value] in parseTopLevelSecrets(check io:fileReadLines(path)).entries() {
+            if !result.hasKey(alias) {
+                result[alias] = value;
+            }
+        }
+    }
+    return result;
+}
+
+// Extracts the string entries of the top-level [secrets] table from TOML file lines.
+public isolated function parseTopLevelSecrets(string[] lines) returns map<string> {
+    map<string> result = {};
+    boolean inSecretsTable = false;
+    foreach string rawLine in lines {
+        string line = rawLine.trim();
+        if line.startsWith("[") {
+            int? close = line.indexOf("]");
+            inSecretsTable = !line.startsWith("[[") && close is int && line.substring(1, close).trim() == "secrets";
+            continue;
+        }
+        int? eq = line.indexOf("=");
+        if !inSecretsTable || line.startsWith("#") || eq is () {
+            continue;
+        }
+        string key = unquote(line.substring(0, eq).trim());
+        string? value = readTomlString(line.substring(eq + 1).trim());
+        if value is string && !result.hasKey(key) {
+            result[key] = value;
+        }
+    }
+    return result;
+}
+
+// Strips matching surrounding quotes from a TOML key.
+isolated function unquote(string key) returns string {
+    if key.length() >= 2 && (key.startsWith("\"") && key.endsWith("\"") || key.startsWith("'") && key.endsWith("'")) {
+        return key.substring(1, key.length() - 1);
+    }
+    return key;
+}
+
+// Returns the contents of a single-line TOML basic or literal string, ignoring any trailing comment.
+isolated function readTomlString(string valuePart) returns string? {
+    foreach string quote in ["\"", "'"] {
+        if valuePart.startsWith(quote) {
+            int? end = valuePart.indexOf(quote, 1);
+            return end is int ? valuePart.substring(1, end) : ();
+        }
+    }
+    return ();
 }
 
 // Decrypts a value encrypted by the WSO2 cipher tool using asymmetric RSA/ECB/OAEPwithSHA1andMGF1Padding.
