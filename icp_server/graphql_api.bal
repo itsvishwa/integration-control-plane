@@ -2275,7 +2275,7 @@ service /graphql on graphqlListener {
         // heartbeats are resolved by it. Resending the current value is accepted so clients that send
         // every field still work.
         if handler is string && handler.trim() != currentEnv.handler {
-            return error(string `Environment handler cannot be changed (current handler: '${currentEnv.handler}')`);
+            return error("Environment handler cannot be changed");
         }
 
         check storage:updateEnvironment(environmentId, name, description, critical);
