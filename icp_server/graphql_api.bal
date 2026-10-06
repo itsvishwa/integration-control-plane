@@ -3604,7 +3604,7 @@ service /graphql on graphqlListener {
         return {
             ...fetchableOf(answer),
             content: check mi_management:fetchWsdlContent(wsdlUrl, trustedHost,
-                    artifactsApiAllowInsecureTLS)
+                    storage:managementSecureSocket(artifactsApiAllowInsecureTLS))
         };
     }
 

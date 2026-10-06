@@ -41,6 +41,11 @@ function init() returns error? {
     };
 
     log:printInfo("Initializing ICP server");
+    if artifactsApiAllowInsecureTLS && storage:managementSecureSocket(false) !is () {
+        log:printWarn("artifactsApiTrustStorePath is set, but the top-level artifactsApiAllowInsecureTLS "
+            + "is true: console management calls (artifact source, WSDL, loggers, MI users) skip "
+            + "certificate validation and do not use the truststore");
+    }
     authBackendClient = check new (ldapUserStoreEnabled ? ldapAuthBackendUrl : authBackendUrl,
         secureSocket = authBackendSecureSocket,
         auth = authBackendJwtConfig
