@@ -2239,7 +2239,8 @@ service /graphql on graphqlListener {
         return true;
     }
 
-    // Update environment name, description, and/or critical status (requires management permission)
+    // Update environment name, description, and/or critical status (requires management permission).
+    // `handler` is only accepted when it equals the current handler, because handlers are immutable.
     isolated remote function updateEnvironment(graphql:Context context, string environmentId, string? name, string? handler, string? description, boolean? critical) returns types:Environment?|error {
         types:UserContextV2 userContext = check extractUserContext(context);
 
@@ -2270,13 +2271,14 @@ service /graphql on graphqlListener {
             }
         }
 
-        // Only a changed handler is validated, so environments created before handlers were
-        // validated can still be edited without being forced to rename.
+        // The handler is immutable: runtimes name their environment by handler in their config, and
+        // heartbeats are resolved by it. Resending the current value is accepted so clients that send
+        // every field still work.
         if handler is string && handler.trim() != currentEnv.handler {
-            check storage:validateHandler("Environment handler", handler.trim(), storage:MAX_ENVIRONMENT_HANDLER_LENGTH);
+            return error(string `Environment handler cannot be changed (current handler: '${currentEnv.handler}')`);
         }
 
-        check storage:updateEnvironment(environmentId, name, handler, description, critical);
+        check storage:updateEnvironment(environmentId, name, description, critical);
         types:Environment? updated = check storage:getEnvironmentById(environmentId);
         storage:logAuditEvent(storage:AUDIT_ENVIRONMENT_UPDATE, userId = userContext.userId,
                 resourceType = storage:AUDIT_RESOURCE_ENVIRONMENT, resourceId = environmentId,

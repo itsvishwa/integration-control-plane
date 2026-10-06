@@ -15,6 +15,7 @@
 // under the License.
 
 import icp_server.storage;
+import icp_server.types;
 
 import ballerina/test;
 
@@ -83,15 +84,36 @@ function testCreateEnvironmentRejectsInvalidHandler() returns error? {
 @test:Config {
     groups: ["handler-validation", "environment-graphql"]
 }
-function testUpdateEnvironmentRejectsInvalidHandler() returns error? {
+function testUpdateEnvironmentRejectsHandlerChange() returns error? {
+    // Environment handlers are immutable, whether the new value is a valid slug or not.
+    foreach string newHandler in ["dev-renamed", "dev/../x"] {
+        json response = check updateEnvironmentHandler(DEV_ENV_ID, newHandler);
+        string body = response.toJsonString();
+        test:assertTrue(response.errors is json, string `Changing the handler to '${newHandler}' must be rejected, got: ${body}`);
+        test:assertTrue(body.includes("Environment handler cannot be changed"),
+                string `Rejection must come from the immutability check, got: ${body}`);
+    }
+    types:Environment env = check storage:getEnvironmentById(DEV_ENV_ID);
+    test:assertEquals(env.handler, "dev", "The handler must be unchanged");
+}
+
+@test:Config {
+    groups: ["handler-validation", "environment-graphql"]
+}
+function testUpdateEnvironmentAcceptsUnchangedHandler() returns error? {
+    // Clients that resend the current handler along with the other fields keep working.
+    json response = check updateEnvironmentHandler(DEV_ENV_ID, "dev");
+    test:assertFalse(response.errors is json, string `Resending the current handler must be accepted, got: ${response.toJsonString()}`);
+    test:assertEquals(check response.data.updateEnvironment.handler, "dev");
+}
+
+function updateEnvironmentHandler(string environmentId, string handler) returns json|error {
     string mutation = string `
         mutation UpdateEnvironment($environmentId: String!, $handler: String) {
-            updateEnvironment(environmentId: $environmentId, handler: $handler) { id }
+            updateEnvironment(environmentId: $environmentId, handler: $handler) { id handler }
         }
     `;
-    json variables = {environmentId: DEV_ENV_ID, handler: "dev/../x"};
-    json response = check executeGraphQL(mutation, adminToken, variables);
-    assertHandlerRejected(response, "Environment handler");
+    return executeGraphQL(mutation, adminToken, {environmentId, handler});
 }
 
 @test:Config {
