@@ -67,6 +67,21 @@ function testManagementCallTrustsConfiguredTruststore() returns error? {
     test:assertEquals(result, {count: 0, list: []});
 }
 
+// A truststore that exists but can't be used is rejected when it's configured, not on the
+// first management call.
+@test:Config {
+    groups: ["mi-management-tls"]
+}
+function testTruststoreValidation() {
+    test:assertEquals(storage:validateTrustStore("tests/resources/keys/mi_internal_ca_truststore.p12", "changeit"), ());
+
+    error? wrongPassword = storage:validateTrustStore("tests/resources/keys/mi_internal_ca_truststore.p12", "wrong");
+    test:assertTrue(wrongPassword is error, "a wrong truststore password should be rejected");
+
+    error? notATruststore = storage:validateTrustStore("tests/Config.toml", "changeit");
+    test:assertTrue(notATruststore is error, "a file that isn't a truststore should be rejected");
+}
+
 // artifactsApiAllowInsecureTLS = true keeps its meaning: validation is off, truststore or not.
 @test:Config {
     groups: ["mi-management-tls"]
