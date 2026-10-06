@@ -47,6 +47,9 @@ enableMetrics = true
 # =============================================================================
 # NOTE: Must remain in the top-level section (before any [section] header).
 # artifactsApiAllowInsecureTLS = true  # set false in production with proper trust
+# The same flag also appears under [icp_server.storage]; set both. To trust a runtime
+# management API whose certificate comes from an internal CA, set artifactsApiTrustStorePath
+# under [icp_server.storage].
 
 # =============================================================================
 # AUTHENTICATION BACKEND CONFIGURATION
@@ -218,6 +221,12 @@ frontendJwtHMACSecret = "default-secret-key-at-least-32-characters-long-for-hs25
 [icp_server.storage]
 # heartbeatTimeoutSeconds = 30
 # artifactsApiAllowInsecureTLS = true  # set false in production with proper trust
+# Truststore (JKS or PKCS12) used to verify runtime management API certificates, for every
+# ICP-to-runtime management call. It replaces the JVM's default cacerts for these calls,
+# so also import the CAs of any publicly signed runtimes; empty keeps cacerts. Only takes effect
+# while artifactsApiAllowInsecureTLS is false (here and at the top level).
+# artifactsApiTrustStorePath = "../conf/security/mi-truststore.p12"
+# artifactsApiTrustStorePassword = "$secret{artifactsApiTrustStorePassword}"  # alias in [icp_server.storage.secrets]
 # Primary database connection settings
 # Database type: h2 (in-memory), mysql, mssql, postgresql, or oracle. Default is h2
 
