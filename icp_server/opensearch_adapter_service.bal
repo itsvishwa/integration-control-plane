@@ -178,8 +178,7 @@ service /observability on openSerachObservabilityListener {
         json searchRequest = {
             "query": query,
             "size": logRequest.'limit,
-            // Sort by the time the runtime logged the line (the TimeGenerated column), then by
-            // ingest time for documents without it.
+            // Sort by log time, then ingest time
             "sort": [
                 {"time": {"order": sortOrder, "unmapped_type": "date"}},
                 {"@timestamp": sortOrder}
@@ -243,9 +242,7 @@ service /observability on openSerachObservabilityListener {
         foreach OpenSearchHit hit in searchResponse.hits.hits {
             LogSource sourceData = hit._source;
 
-            // Extract fields from the log entry
-            // Prefer the time the runtime logged the line; @timestamp is the ingest time for
-            // BI logs, as the Ballerina Fluent Bit parser does not use "time" as its time key.
+            // Extract fields from the log entry (for BI, @timestamp is the ingest time, so prefer "time")
             anydata timestampData = sourceData["@timestamp"];
             string? logTime = sourceData?.time;
             string timestamp = logTime is string && logTime != "" ? logTime
@@ -794,8 +791,7 @@ function buildLogQuery(types:LogEntryRequest logRequest) returns json {
     if (endTime is string) {
         timeRange["lte"] = endTime;
     }
-    // Filter on the time the runtime logged the line, matching the TimeGenerated column the
-    // console pages by; fall back to @timestamp (ingest time) for documents without it.
+    // Filter on log time, or on @timestamp when it is missing
     if (timeRange.length() > 0) {
         mustClauses.push({
             "bool": {
@@ -872,8 +868,7 @@ function constructLogEntry(LogSource sourceData, map<json> extraFields) returns 
         extraPairs += string ` ${key}=${valueStr}`;
     }
 
-    // Construct the log entry in logfmt style. Time and level are left out because
-    // they are returned as their own columns (TimeGenerated, LogLevel).
+    // Construct the log entry in logfmt style (time and level have their own columns)
     string logEntry = string `${serviceSpecificFields} message="${message}"${traceId}${spanId}${runtimeId}${extraPairs}`;
     return logEntry.trim();
 }
