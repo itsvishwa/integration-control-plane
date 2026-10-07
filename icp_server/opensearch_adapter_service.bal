@@ -178,7 +178,10 @@ service /observability on openSerachObservabilityListener {
         json searchRequest = {
             "query": query,
             "size": logRequest.'limit,
+            // Sort by the time the runtime logged the line (the TimeGenerated column), then by
+            // ingest time for documents without it.
             "sort": [
+                {"time": {"order": sortOrder, "unmapped_type": "date"}},
                 {"@timestamp": sortOrder}
             ]
         };
@@ -241,8 +244,12 @@ service /observability on openSerachObservabilityListener {
             LogSource sourceData = hit._source;
 
             // Extract fields from the log entry
+            // Prefer the time the runtime logged the line; @timestamp is the ingest time for
+            // BI logs, as the Ballerina Fluent Bit parser does not use "time" as its time key.
             anydata timestampData = sourceData["@timestamp"];
-            string timestamp = timestampData is string ? timestampData : timestampData.toString();
+            string? logTime = sourceData?.time;
+            string timestamp = logTime is string && logTime != "" ? logTime
+                : timestampData is string ? timestampData : timestampData.toString();
             string level = sourceData?.level ?: "INFO";
             string? 'class = sourceData?.'class ?: ();
             string logFilePath = sourceData?.log_file_path ?: "";
@@ -787,10 +794,21 @@ function buildLogQuery(types:LogEntryRequest logRequest) returns json {
     if (endTime is string) {
         timeRange["lte"] = endTime;
     }
+    // Filter on the time the runtime logged the line, matching the TimeGenerated column the
+    // console pages by; fall back to @timestamp (ingest time) for documents without it.
     if (timeRange.length() > 0) {
         mustClauses.push({
-            "range": {
-                "@timestamp": timeRange
+            "bool": {
+                "should": [
+                    {"range": {"time": timeRange}},
+                    {
+                        "bool": {
+                            "must_not": [{"exists": {"field": "time"}}],
+                            "must": [{"range": {"@timestamp": timeRange}}]
+                        }
+                    }
+                ],
+                "minimum_should_match": 1
             }
         });
     }
@@ -805,8 +823,6 @@ function buildLogQuery(types:LogEntryRequest logRequest) returns json {
 // Helper function to construct log entry string from OpenSearch document.
 // extraFields contains user-defined key-value pairs extracted from the document.
 function constructLogEntry(LogSource sourceData, map<json> extraFields) returns string {
-    string time = sourceData?.time ?: "";
-    string level = sourceData?.level ?: "";
     string message = sourceData?.message ?: "";
     string serviceType = sourceData?.service_type ?: "";
 
@@ -856,8 +872,10 @@ function constructLogEntry(LogSource sourceData, map<json> extraFields) returns 
         extraPairs += string ` ${key}=${valueStr}`;
     }
 
-    // Construct the log entry in logfmt style
-    return string `time=${time} level=${level}${serviceSpecificFields} message="${message}"${traceId}${spanId}${runtimeId}${extraPairs}`;
+    // Construct the log entry in logfmt style. Time and level are left out because
+    // they are returned as their own columns (TimeGenerated, LogLevel).
+    string logEntry = string `${serviceSpecificFields} message="${message}"${traceId}${spanId}${runtimeId}${extraPairs}`;
+    return logEntry.trim();
 }
 
 // Helper function to deduplicate log entries based on composite key
