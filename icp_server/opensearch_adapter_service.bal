@@ -178,9 +178,18 @@ service /observability on openSerachObservabilityListener {
         json searchRequest = {
             "query": query,
             "size": logRequest.'limit,
-            // Sort by log time, then ingest time
+            // Sort by log time, or by @timestamp when it is missing
             "sort": [
-                {"time": {"order": sortOrder, "unmapped_type": "date"}},
+                {
+                    "_script": {
+                        "type": "number",
+                        "order": sortOrder,
+                        "script": {
+                            "lang": "painless",
+                            "source": "doc.containsKey('time') && !doc['time'].empty ? doc['time'].value.toInstant().toEpochMilli() : doc['@timestamp'].value.toInstant().toEpochMilli()"
+                        }
+                    }
+                },
                 {"@timestamp": sortOrder}
             ]
         };
