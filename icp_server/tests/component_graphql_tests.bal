@@ -614,5 +614,12 @@ function testRuntimeRegistrationDefaultsToUnspecifiedType() returns error? {
         test:assertEquals(existing.displayType, selectedType,
             "Registering another runtime must preserve the user-selected type");
         test:assertEquals(existing.componentSubType, "aiAgent");
+
+        // A type an operator cleared is a choice too: it is not promoted again.
+        check storage:updateComponent(componentId, (), (), SUPER_ADMIN_USER_ID, "unspecified");
+        check storage:promoteToWorkflowIntegration(componentId);
+        types:Component cleared = check storage:getComponentById(componentId);
+        test:assertEquals(cleared.displayType, "unspecified",
+            "Workflow discovery must not override a type an operator cleared");
     }
 }

@@ -939,9 +939,11 @@ isolated function mapToComponent(types:ComponentInDB component) returns types:Co
 // (Creating the integration by hand and picking Workflow sets the type up front, which is
 // why that path has always worked.)
 //
-// Only the unclassified and legacy generic types are promoted, and only for Ballerina
-// components, since the workflow engine is Ballerina-only: a type an operator chose
-// deliberately is left alone, and re-running this is a no-op.
+// Only the legacy generic type and an untouched unclassified one are promoted, and only
+// for Ballerina components, since the workflow engine is Ballerina-only. "unspecified" is
+// also what an operator sets to clear the type of a multi-type integration, and only
+// `updateComponent` writes updated_by, so a row with it set has been edited and is left
+// alone. Re-running this is a no-op.
 //
 // + componentId - The component the reporting runtime belongs to
 // + return - An error only if the update itself fails
@@ -951,7 +953,8 @@ public isolated function promoteToWorkflowIntegration(string componentId) return
         SET display_type = ${WORKFLOW_DISPLAY_TYPE}
         WHERE component_id = ${componentId}
             AND component_type = ${types:BI}
-            AND display_type IN (${UNSPECIFIED_DISPLAY_TYPE}, ${GENERIC_DISPLAY_TYPE})
+            AND (display_type = ${GENERIC_DISPLAY_TYPE}
+                OR (display_type = ${UNSPECIFIED_DISPLAY_TYPE} AND updated_by IS NULL))
     `);
     int? affected = result.affectedRowCount;
     if affected is int && affected > 0 {
