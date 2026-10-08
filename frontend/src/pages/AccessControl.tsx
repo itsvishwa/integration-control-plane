@@ -56,7 +56,7 @@ export default function AccessControl(): JSX.Element {
   useEffect(() => {
     if (!isOrgPermissionsLoaded) return;
     if (!canSeeAccessControl) {
-      navigate(`/organizations/${orgHandler}`);
+      navigate(`/organizations/${encodeURIComponent(orgHandler)}`);
     }
   }, [isOrgPermissionsLoaded, canSeeAccessControl, navigate, orgHandler]);
 
@@ -68,7 +68,7 @@ export default function AccessControl(): JSX.Element {
         <PageTitle.Header>Access Control</PageTitle.Header>
       </PageTitle>
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs variant="scrollable" scrollButtons="auto" value={safeIndex} onChange={(_, v) => navigate(`/organizations/${orgHandler}/settings/access-control/${orgTabs[v] ?? 'users'}`)}>
+        <Tabs variant="scrollable" scrollButtons="auto" value={safeIndex} onChange={(_, v) => navigate(`/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/${orgTabs[v] ?? 'users'}`)}>
           <Tab label="Users" />
           <Tab label="Roles" />
           <Tab label="Groups" />
@@ -95,7 +95,7 @@ export function OrgAccessControl({ org }: { org: string }): JSX.Element {
   useEffect(() => {
     if (!isOrgPermissionsLoaded) return;
     if (!canSeeAccessControl) {
-      navigate(`/organizations/${org}`);
+      navigate(`/organizations/${encodeURIComponent(org)}`);
     }
   }, [isOrgPermissionsLoaded, canSeeAccessControl, navigate, org]);
 
@@ -107,7 +107,7 @@ export function OrgAccessControl({ org }: { org: string }): JSX.Element {
         <PageTitle.Header>Access Control</PageTitle.Header>
       </PageTitle>
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs variant="scrollable" scrollButtons="auto" value={safeIndex} onChange={(_, v) => navigate(`/organizations/${org}/settings/access-control/${orgTabs[v] ?? 'users'}`)}>
+        <Tabs variant="scrollable" scrollButtons="auto" value={safeIndex} onChange={(_, v) => navigate(`/organizations/${encodeURIComponent(org)}/settings/access-control/${orgTabs[v] ?? 'users'}`)}>
           <Tab label="Users" />
           <Tab label="Roles" />
           <Tab label="Groups" />
@@ -134,7 +134,7 @@ export function ProjectAccessControl({ org, project }: { org: string; project: s
 
   useEffect(() => {
     if (!isLoading && projectId && !canSeeAccessControl) {
-      navigate(`/organizations/${org}/projects/${project}`);
+      navigate(`/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}`);
     }
   }, [canSeeAccessControl, isLoading, projectId, navigate, org, project]);
 
@@ -155,7 +155,7 @@ export function ProjectAccessControl({ org, project }: { org: string; project: s
         <PageTitle.Header>Access Control</PageTitle.Header>
       </PageTitle>
       <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-        <Tabs value={safeIndex} onChange={(_, v) => navigate(`/organizations/${org}/projects/${project}/settings/access-control/${projectTabs[v] ?? 'roles'}`)}>
+        <Tabs value={safeIndex} onChange={(_, v) => navigate(`/organizations/${encodeURIComponent(org)}/projects/${encodeURIComponent(project)}/settings/access-control/${projectTabs[v] ?? 'roles'}`)}>
           <Tab label="Roles" />
           <Tab label="Groups" />
           {window.API_CONFIG.ssoEnabled && <Tab label={SSO_TAB_LABEL} />}

@@ -263,7 +263,10 @@ isolated function searchForUserDN(string username) returns string|error {
     ldap:Client adminClient = check new (buildAdminConnectionConfig());
     string filter = re`\?`.replaceAll(ldapUserSearchFilter, escapeForFilter(username));
     log:printDebug("Searching for user", searchBase = ldapUserSearchBase, filter = filter);
-    ldap:SearchResult|ldap:Error result = adminClient->search(ldapUserSearchBase, filter, ldap:SUB);
+    // The ldap connector does not expose the entry DN, so request it via the operational
+    // attributes servers publish it under.
+    ldap:SearchResult|ldap:Error result = adminClient->search(ldapUserSearchBase, filter, ldap:SUB,
+            LDAP_ENTRY_DN_ATTRIBUTES);
 
 
     if result is ldap:Error {
@@ -276,14 +279,14 @@ isolated function searchForUserDN(string username) returns string|error {
         return error(string `User '${username}' not found in LDAP directory`);
     }
 
-    // Some connectors expose the DN as a regular attribute; try that first.
-    ldap:AttributeType? dn = entries[0]["dn"];
-    if dn is string && dn.trim() != "" {
+    string? dn = getDNFromEntry(entries[0]);
+    if dn is string {
         return dn;
     }
 
     // Fall back to constructing the DN from the username attribute and search base.
-    // This works for the common case where all users live directly under ldapUserSearchBase.
+    // This only works when users live directly under ldapUserSearchBase and are named
+    // by ldapUserNameAttribute (e.g. uid=<username>,<searchBase>).
     string constructed = string `${ldapUserNameAttribute}=${escapeForDN(username)},${ldapUserSearchBase}`;
     log:printDebug("DN not found in search result; using constructed DN",
             username = username, constructedDN = constructed);
@@ -464,6 +467,27 @@ isolated function ldapDerivedUserId(string username) returns string {
 isolated function byteToHex(int b) returns string {
     string[] digits = ["0","1","2","3","4","5","6","7","8","9","a","b","c","d","e","f"];
     return digits[(b >> 4) & 0xf] + digits[b & 0xf];
+}
+
+// Operational attributes that carry an entry's DN: entryDN (RFC 5020; OpenLDAP, ApacheDS,
+// 389 DS) and distinguishedName (Active Directory). Servers ignore ones they don't know.
+final string[] & readonly LDAP_ENTRY_DN_ATTRIBUTES = ["entryDN", "distinguishedName"];
+
+// Return the DN carried by a search result entry, if any. Attribute names are matched
+// case-insensitively because servers may return them in a different case.
+isolated function getDNFromEntry(ldap:Entry entry) returns string? {
+    foreach string dnAttr in LDAP_ENTRY_DN_ATTRIBUTES {
+        foreach [string, ldap:AttributeType] [name, value] in entry.entries() {
+            if name.toLowerAscii() != dnAttr.toLowerAscii() {
+                continue;
+            }
+            string? dn = value is string ? value : (value is string[] && value.length() > 0 ? value[0] : ());
+            if dn is string && dn.trim() != "" {
+                return dn;
+            }
+        }
+    }
+    return ();
 }
 
 // Extract the value of a named attribute from an LDAP DN string.

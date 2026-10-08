@@ -53,6 +53,7 @@ public isolated function createProject(types:ProjectInput project, types:UserCon
         log:printWarn("Project creation attempted without handler for project: " + project.name);
         return error("Project handler is required");
     }
+    check validateHandler("Project handler", handler, MAX_PROJECT_HANDLER_LENGTH);
 
     // Check for duplicate handler within the same org
     sql:ParameterizedQuery handlerCheckQuery = `SELECT COUNT(*) as cnt FROM projects WHERE org_id = ${project.orgId} AND handler = ${handler}`;

@@ -45,6 +45,8 @@ ldapConnectionPassword = "secret"                # default — change in product
 | `ldapUserDNPattern` | _(empty)_ | Optional shortcut — construct the DN directly without a search (see below) |
 | `ldapDisplayNameAttribute` | _(empty)_ | Attribute used as the display name in ICP; leave empty to use the username |
 
+When no pattern is set, ICP searches for the user and binds with the DN of the matching entry, read from the `entryDN` (OpenLDAP, ApacheDS, 389 Directory Server) or `distinguishedName` (Active Directory) operational attribute. Users can therefore live anywhere under `ldapUserSearchBase` and be named by any RDN (e.g. `cn=jdoe`). If the server returns neither attribute, ICP falls back to `<ldapUserNameAttribute>=<username>,<ldapUserSearchBase>`.
+
 **`ldapUserDNPattern`** avoids a search round-trip by constructing the DN from the username directly. Use `{0}` as the placeholder:
 
 ```toml

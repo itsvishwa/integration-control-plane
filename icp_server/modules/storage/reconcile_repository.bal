@@ -231,17 +231,18 @@ public isolated function queryArtifactState(string componentId, string envId)
 // update win the status it is in the middle of setting.
 public isolated function migrateLegacyArtifactTypeKeys(string componentId, string envId,
         string artifactName, string canonicalType) returns error? {
-    // Select the whole case-insensitive group rather than filtering the canonical spelling out in
-    // SQL. On MySQL this column is utf8mb4_unicode_ci, so `artifact_type <> canonical` is false for
-    // a difference of case alone and an SQL-side filter would match nothing; the exact comparison
-    // is therefore made in Ballerina, which is case-sensitive on every database.
+    // Select every row for the artifact and pick out the group in Ballerina. The group is every
+    // spelling that normalizes to the canonical type, including "ProxyService" and the
+    // "proxyservice" that older lowercase-only normalization stored for it, which no SQL
+    // expression can map to "proxy-service". The exact comparison below is also case-sensitive on
+    // every database, which an SQL filter is not under MySQL's utf8mb4_unicode_ci collation.
     stream<LegacyDesiredStateRow, sql:Error?> rows = dbClient->query(`
         SELECT artifact_type, state_key, state_value FROM reconcile_desired_state
         WHERE component_id = ${componentId} AND env_id = ${envId}
             AND artifact_name = ${artifactName}
-            AND LOWER(TRIM(artifact_type)) = ${canonicalType}
     `);
     LegacyDesiredStateRow[] groupRows = check from LegacyDesiredStateRow row in rows
+        where normalizeArtifactType(row.artifact_type) == canonicalType
         select row;
 
     boolean hasLegacySpelling = groupRows.some(row => row.artifact_type != canonicalType);
@@ -252,7 +253,9 @@ public isolated function migrateLegacyArtifactTypeKeys(string componentId, strin
     // Merge the group into one state map. The canonical spelling wins a shared key; anything only a
     // legacy row carries is kept, so a tracing or statistics value set earlier is not lost.
     map<string> merged = {};
+    map<boolean> spellings = {};
     foreach LegacyDesiredStateRow row in groupRows {
+        spellings[row.artifact_type] = true;
         string? value = row.state_value;
         if value is () {
             continue;
@@ -267,21 +270,85 @@ public isolated function migrateLegacyArtifactTypeKeys(string componentId, strin
 
     // Delete the whole group before rewriting it. Deleting only the legacy spellings would remove
     // the canonical row too under a case-insensitive collation, where the two are not
-    // distinguishable by equality. Both statements run in one transaction so a failure part way
+    // distinguishable by equality; any row such a collation matches normalizes the same way, so it
+    // is part of the group anyway. Both steps run in one transaction so a failure part way
     // through cannot leave the artifact with its desired state deleted and nothing written back.
     types:ReconcileArtifactKey canonicalKey = {artifactName: artifactName, artifactType: canonicalType};
     transaction {
-        _ = check dbClient->execute(`
-            DELETE FROM reconcile_desired_state
-            WHERE component_id = ${componentId} AND env_id = ${envId}
-                AND artifact_name = ${artifactName}
-                AND LOWER(TRIM(artifact_type)) = ${canonicalType}
-        `);
+        foreach string spelling in spellings.keys() {
+            _ = check dbClient->execute(`
+                DELETE FROM reconcile_desired_state
+                WHERE component_id = ${componentId} AND env_id = ${envId}
+                    AND artifact_name = ${artifactName} AND artifact_type = ${spelling}
+            `);
+        }
 
         if merged.length() > 0 {
             check upsertReconcileDesiredState(componentId, envId, canonicalKey, merged);
         }
         check commit;
+    }
+}
+
+type MIDesiredStateRow record {|
+    string component_id;
+    string env_id;
+    string artifact_name;
+    string artifact_type;
+    string state_key;
+|};
+
+// Repairs MI desired state that heartbeat replay could never apply, once, at startup.
+//
+// Before every artifact control validated and normalized its artifact type, a caller could store
+// desired state that no MI request can be built for: a tracing change on "ProxyService" was kept
+// under "proxyservice", and a tracing change on a task was accepted although MI refuses it. Every
+// reconcile pass then logged "MI control action not sent" for that row, forever. Rows whose type
+// normalizes to a canonical one that supports the control are folded into the canonical key, so
+// the change the caller was told succeeded is finally applied; rows that can never be applied
+// are deleted. Only the status, tracing and statistics keys the artifact controls write are
+// touched, and only for MI integrations, whose artifact types are the ones normalized here.
+public isolated function repairMIDesiredState() returns error? {
+    stream<MIDesiredStateRow, sql:Error?> rows = dbClient->query(`
+        SELECT d.component_id, d.env_id, d.artifact_name, d.artifact_type, d.state_key
+        FROM reconcile_desired_state d
+        JOIN components c ON c.component_id = d.component_id
+        WHERE c.component_type = 'MI'
+    `);
+    MIDesiredStateRow[] miRows = check from MIDesiredStateRow row in rows
+        select row;
+
+    map<[string, string, string, string]> toMigrate = {};
+    foreach MIDesiredStateRow row in miRows {
+        string canonicalType = normalizeArtifactType(row.artifact_type);
+        boolean applicable;
+        if row.state_key == "status" {
+            applicable = supportsStatusChange(canonicalType);
+        } else if row.state_key == "tracing" || row.state_key == "statistics" {
+            applicable = supportsTraceAndStatistics(canonicalType);
+        } else {
+            continue;
+        }
+
+        if !applicable {
+            log:printWarn("Removing MI desired state that cannot be applied to any runtime",
+                    componentId = row.component_id, envId = row.env_id, artifactName = row.artifact_name,
+                    artifactType = row.artifact_type, stateKey = row.state_key);
+            _ = check dbClient->execute(`
+                DELETE FROM reconcile_desired_state
+                WHERE component_id = ${row.component_id} AND env_id = ${row.env_id}
+                    AND artifact_name = ${row.artifact_name} AND artifact_type = ${row.artifact_type}
+                    AND state_key = ${row.state_key}
+            `);
+        } else if canonicalType != row.artifact_type {
+            toMigrate[string `${row.component_id}|${row.env_id}|${row.artifact_name}|${canonicalType}`] =
+                [row.component_id, row.env_id, row.artifact_name, canonicalType];
+        }
+    }
+
+    // Fold after every deletion, so an unappliable field is not carried into the canonical key.
+    foreach [string, string, string, string] [componentId, envId, artifactName, canonicalType] in toMigrate {
+        check migrateLegacyArtifactTypeKeys(componentId, envId, artifactName, canonicalType);
     }
 }
 

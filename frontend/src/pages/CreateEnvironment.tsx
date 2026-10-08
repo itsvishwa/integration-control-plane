@@ -23,13 +23,7 @@ import { useNavigate } from 'react-router';
 import { useCreateEnvironment } from '../api/mutations';
 import { useEnvironmentHandlerAvailability } from '../api/queries';
 import { resourceUrl, type OrgScope } from '../nav';
-
-function toHandler(name: string) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+import { HANDLER_RULE, isValidHandler, toHandler } from '../utils/handler';
 
 function formatErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : typeof error === 'object' && error !== null && 'message' in error && typeof (error as { message: unknown }).message === 'string' ? (error as { message: string }).message : '';
@@ -79,6 +73,7 @@ export default function CreateEnvironment(scope: OrgScope): JSX.Element {
   }, [normalizedEffectiveHandler]);
 
   const handlerMissing = !normalizedEffectiveHandler && (!!name.trim() || handlerEdited);
+  const handlerInvalid = !handlerMissing && normalizedEffectiveHandler !== '' && !isValidHandler(normalizedEffectiveHandler);
   const availability = useEnvironmentHandlerAvailability(debouncedHandler);
   const handlerTaken = debouncedHandler !== '' && availability.data?.handlerUnique === false;
 
@@ -138,8 +133,8 @@ export default function CreateEnvironment(scope: OrgScope): JSX.Element {
           }}
           fullWidth
           disabled={!handlerEdited}
-          error={handlerMissing || handlerTaken}
-          helperText={handlerMissing ? 'Handler must include at least one letter or number.' : handlerTaken ? 'This handler is already taken. Please choose a different one.' : undefined}
+          error={handlerMissing || handlerInvalid || handlerTaken}
+          helperText={handlerMissing ? 'Handler must include at least one letter or number.' : handlerInvalid ? HANDLER_RULE : handlerTaken ? 'This handler is already taken. Please choose a different one.' : undefined}
           slotProps={{
             input: {
               endAdornment: (
@@ -168,7 +163,7 @@ export default function CreateEnvironment(scope: OrgScope): JSX.Element {
         <Button variant="outlined" onClick={() => navigate(resourceUrl(scope, 'environments'))}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={submit} disabled={!name.trim() || !normalizedEffectiveHandler || handlerTaken || mutation.isPending}>
+        <Button variant="contained" onClick={submit} disabled={!name.trim() || !normalizedEffectiveHandler || handlerInvalid || handlerTaken || mutation.isPending}>
           Create
         </Button>
       </Stack>

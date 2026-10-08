@@ -47,6 +47,9 @@ enableMetrics = true
 # =============================================================================
 # NOTE: Must remain in the top-level section (before any [section] header).
 # artifactsApiAllowInsecureTLS = true  # set false in production with proper trust
+# The same flag also appears under [icp_server.storage]; set both. To trust a runtime
+# management API whose certificate comes from an internal CA, set artifactsApiTrustStorePath
+# under [icp_server.storage].
 
 # =============================================================================
 # AUTHENTICATION BACKEND CONFIGURATION
@@ -155,7 +158,7 @@ frontendJwtHMACSecret = "default-secret-key-at-least-32-characters-long-for-hs25
 # ssoJwksUrl = "https://api.asgardeo.io/t/{org_name}/oauth2/jwks"
 # ssoClientId = "your-client-id-from-asgardeo"
 # ssoClientSecret = "your-client-secret-from-asgardeo"
-# ssoRedirectUri = "http://localhost:5173/sso/callback"
+# ssoRedirectUri = "https://localhost:9446/sso/callback"
 # ssoUsernameClaim = "email"  # or "preferred_username"
 # ssoScopes = ["openid", "email", "profile"]
 # ssoAllowInsecureTLS = false  # For OIDC providers running with self-signed cert
@@ -172,7 +175,7 @@ frontendJwtHMACSecret = "default-secret-key-at-least-32-characters-long-for-hs25
 # ssoJwksUrl = "https://{your-domain}.okta.com/oauth2/default/v1/keys"
 # ssoClientId = "your-okta-client-id"
 # ssoClientSecret = "your-okta-client-secret"
-# ssoRedirectUri = "http://localhost:5173/sso/callback"
+# ssoRedirectUri = "https://localhost:9446/sso/callback"
 # ssoUsernameClaim = "email"
 # ssoScopes = ["openid", "email", "profile"]
 # ssoAllowInsecureTLS = false  # For OIDC providers running with self-signed cert
@@ -185,7 +188,7 @@ frontendJwtHMACSecret = "default-secret-key-at-least-32-characters-long-for-hs25
 # ssoJwksUrl = "https://{your-domain}.auth0.com/.well-known/jwks.json"
 # ssoClientId = "your-auth0-client-id"
 # ssoClientSecret = "your-auth0-client-secret"
-# ssoRedirectUri = "http://localhost:5173/sso/callback"
+# ssoRedirectUri = "https://localhost:9446/sso/callback"
 # ssoUsernameClaim = "email"
 # ssoScopes = ["openid", "email", "profile"]
 # ssoAllowInsecureTLS = false  # For OIDC providers running with self-signed cert
@@ -211,6 +214,12 @@ frontendJwtHMACSecret = "default-secret-key-at-least-32-characters-long-for-hs25
 [icp_server.storage]
 # heartbeatTimeoutSeconds = 30
 # artifactsApiAllowInsecureTLS = true  # set false in production with proper trust
+# Truststore (JKS or PKCS12) used to verify runtime management API certificates, for every
+# ICP-to-runtime management call. It replaces the JVM's default cacerts for these calls,
+# so also import the CAs of any publicly signed runtimes; empty keeps cacerts. Only takes effect
+# while artifactsApiAllowInsecureTLS is false (here and at the top level).
+# artifactsApiTrustStorePath = "../conf/security/mi-truststore.p12"
+# artifactsApiTrustStorePassword = "$secret{artifactsApiTrustStorePassword}"  # alias in [icp_server.storage.secrets]
 # Primary database connection settings
 # Database type: h2 (in-memory), mysql, mssql, postgresql, or oracle. Default is h2
 

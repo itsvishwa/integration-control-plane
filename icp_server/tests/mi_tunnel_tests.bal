@@ -132,6 +132,78 @@ function testAnAnsweredReadIsServedAndThenGoesStale() returns error? {
 }
 
 @test:Config {groups: ["mi_tunnel"]}
+function testARefusedReadIsReportedAndARetryReportsTheNewRefusal() returns error? {
+    // MySQL evaluates SET assignments left to right; recording a failure must still store the
+    // runtime's answer there, or the caller is told "preparing" until the console gives up.
+    string cacheKey = "mi-refused-" + storage:cacheNowEpoch().toString();
+    int now = storage:cacheNowEpoch();
+    string request = miRequestDocument("GET", "/management/users", (), "alice");
+    _ = check storage:startCacheFetch(cacheKey, CACHE_KIND_MI_READ,
+            miReadOwner(MI_TUNNEL_RUNTIME_A), request, "fetch-1", now + 60);
+    test:assertTrue(recordTunneledCommandResult({
+        runtimeId: MI_TUNNEL_RUNTIME_A,
+        commandId: readCommandId(MI_READ_COMMAND_PREFIX, cacheKey, "fetch-1"),
+        status: "FAILED",
+        httpStatus: 403,
+        body: {Error: "User management is not supported"}
+    }));
+    test:assertEquals(check refusedReadStatus(cacheKey, now), 403, "The refusal is what the caller is told");
+
+    // A retry of a read that has only ever failed reports the newer failure.
+    test:assertTrue(check storage:claimCacheRefresh(cacheKey, "fetch-2", now + 60));
+    test:assertTrue(recordTunneledCommandResult({
+        runtimeId: MI_TUNNEL_RUNTIME_A,
+        commandId: readCommandId(MI_READ_COMMAND_PREFIX, cacheKey, "fetch-2"),
+        status: "FAILED",
+        httpStatus: 500,
+        body: {Error: "Internal error"}
+    }));
+    test:assertEquals(check refusedReadStatus(cacheKey, now), 500);
+}
+
+@test:Config {groups: ["mi_tunnel"]}
+function testAFailedRefreshKeepsServingTheLastGoodAnswer() returns error? {
+    string cacheKey = "mi-keep-" + storage:cacheNowEpoch().toString();
+    int now = storage:cacheNowEpoch();
+    string request = miRequestDocument("GET", "/management/logging", (), "alice");
+    _ = check storage:startCacheFetch(cacheKey, CACHE_KIND_MI_READ,
+            miReadOwner(MI_TUNNEL_RUNTIME_A), request, "fetch-1", now + 60);
+    test:assertTrue(recordTunneledCommandResult({
+        runtimeId: MI_TUNNEL_RUNTIME_A,
+        commandId: readCommandId(MI_READ_COMMAND_PREFIX, cacheKey, "fetch-1"),
+        status: "COMPLETED",
+        httpStatus: 200,
+        body: {count: 1}
+    }));
+    test:assertTrue(check storage:claimCacheRefresh(cacheKey, "fetch-2", now + 60));
+    test:assertTrue(recordTunneledCommandResult({
+        runtimeId: MI_TUNNEL_RUNTIME_A,
+        commandId: readCommandId(MI_READ_COMMAND_PREFIX, cacheKey, "fetch-2"),
+        status: "FAILED",
+        httpStatus: 500,
+        body: {Error: "Internal error"}
+    }));
+    types:CacheEntry? row = check storage:getCacheEntry(cacheKey);
+    test:assertTrue(row is types:CacheEntry);
+    if row is types:CacheEntry {
+        test:assertEquals(row.status, types:CACHE_READY);
+        TunneledReadOutcome outcome = check readOutcomeFromPayload(row.data ?: "", row, now);
+        test:assertEquals(outcome.httpStatus, 200, "The last good answer is still served");
+    }
+}
+
+function refusedReadStatus(string cacheKey, int now) returns int|error {
+    types:CacheEntry? row = check storage:getCacheEntry(cacheKey);
+    if row !is types:CacheEntry {
+        return error("The read's row is gone");
+    }
+    test:assertEquals(row.status, types:CACHE_FAILED);
+    TunneledReadOutcome outcome = check readOutcomeFromPayload(row.data ?: "", row, now);
+    test:assertEquals(outcome.state, "FAILED", "A recorded failure is an answer, not a pending fetch");
+    return outcome.httpStatus;
+}
+
+@test:Config {groups: ["mi_tunnel"]}
 function testLargeAnswersAreSweptLongBeforeWorkflowOnes() returns error? {
     // The reason MI declares a stale window at all. A log file is megabytes that nobody
     // re-reads; a workflow list is small and worth keeping while its runtime is away. One

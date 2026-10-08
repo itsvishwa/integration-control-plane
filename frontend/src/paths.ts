@@ -43,7 +43,7 @@ export function errorUrl(type?: string): string {
 }
 
 export function orgUrl(orgHandler: string): string {
-  return `/organizations/${orgHandler}`;
+  return `/organizations/${encodeURIComponent(orgHandler)}`;
 }
 
 export function orgProjectsUrl(orgHandler: string): string {
@@ -59,88 +59,88 @@ export function editOrgUrl(orgId: string): string {
 }
 
 export function projectUrl(orgHandler: string, projectHandler: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}`;
 }
 
 export function editProjectUrl(orgHandler: string, projectId: string): string {
-  return `/organizations/${orgHandler}/projects/${projectId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${projectId}/edit`;
 }
 
 export function componentUrl(orgHandler: string, projectHandler: string, componentHandler: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/components/${componentHandler}`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/components/${encodeURIComponent(componentHandler)}`;
 }
 
 export function newComponentUrl(orgHandler: string, projectHandler: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/components/new`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/components/new`;
 }
 
 export function editComponentUrl(orgHandler: string, projectHandler: string, componentId: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/components/${componentId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/components/${componentId}/edit`;
 }
 
 export function newOrgUserUrl(orgHandler: string): string {
-  return `/organizations/${orgHandler}/settings/access-control/users/new`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/users/new`;
 }
 
 export function newOrgRoleUrl(orgHandler: string): string {
-  return `/organizations/${orgHandler}/settings/access-control/roles/new`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/roles/new`;
 }
 
 export function newOrgGroupUrl(orgHandler: string): string {
-  return `/organizations/${orgHandler}/settings/access-control/groups/new`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/groups/new`;
 }
 
 export function editEnvironmentUrl(orgHandler: string, envId: string): string {
-  return `/organizations/${orgHandler}/environments/${envId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/environments/${envId}/edit`;
 }
 
 export function orgAccessControlUrl(orgHandler: string, tab: 'users' | 'roles' | 'groups' | 'sso-mappings' = 'users'): string {
-  return `/organizations/${orgHandler}/settings/access-control/${tab}`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/${tab}`;
 }
 
 export function editOrgUserUrl(orgHandler: string, userId: string): string {
-  return `/organizations/${orgHandler}/settings/access-control/users/${userId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/users/${userId}/edit`;
 }
 
 export function editOrgGroupUrl(orgHandler: string, groupId: string): string {
-  return `/organizations/${orgHandler}/settings/access-control/groups/${groupId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/groups/${groupId}/edit`;
 }
 
 export function projectGroupDetailUrl(orgHandler: string, projectHandler: string, groupId: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/settings/access-control/groups/${groupId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/settings/access-control/groups/${groupId}/edit`;
 }
 
 export function componentGroupDetailUrl(orgHandler: string, projectHandler: string, componentHandler: string, groupId: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/components/${componentHandler}/settings/access-control/groups/${groupId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/components/${encodeURIComponent(componentHandler)}/settings/access-control/groups/${groupId}/edit`;
 }
 
 export function orgRoleDetailUrl(orgHandler: string, roleId: string): string {
-  return `/organizations/${orgHandler}/settings/access-control/roles/${roleId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/settings/access-control/roles/${roleId}/edit`;
 }
 
 export function projectAccessControlUrl(orgHandler: string, projectHandler: string, tab: 'roles' | 'groups' = 'roles'): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/settings/access-control/${tab}`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/settings/access-control/${tab}`;
 }
 
 export function projectRoleDetailUrl(orgHandler: string, projectHandler: string, roleId: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/settings/access-control/roles/${roleId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/settings/access-control/roles/${roleId}/edit`;
 }
 
 // 'sso-mappings' is included because the component Access Control tab strip navigates with this builder when SSO is on.
 export function componentAccessControlUrl(orgHandler: string, projectHandler: string, componentHandler: string, tab: 'roles' | 'groups' | 'sso-mappings' = 'roles'): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/components/${componentHandler}/settings/access-control/${tab}`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/components/${encodeURIComponent(componentHandler)}/settings/access-control/${tab}`;
 }
 
 export function componentRoleDetailUrl(orgHandler: string, projectHandler: string, componentHandler: string, roleId: string): string {
-  return `/organizations/${orgHandler}/projects/${projectHandler}/components/${componentHandler}/settings/access-control/roles/${roleId}/edit`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/projects/${encodeURIComponent(projectHandler)}/components/${encodeURIComponent(componentHandler)}/settings/access-control/roles/${roleId}/edit`;
 }
 
 export function orgAnalyticsUrl(orgHandler: string): string {
-  return `/organizations/${orgHandler}/analytics`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/analytics`;
 }
 
 export function orgAnalyticsLogsUrl(orgHandler: string): string {
-  return `/organizations/${orgHandler}/analytics/logs`;
+  return `/organizations/${encodeURIComponent(orgHandler)}/analytics/logs`;
 }
 
 // ---------------------------------------------------------------------------

@@ -41,6 +41,11 @@ function init() returns error? {
     };
 
     log:printInfo("Initializing ICP server");
+    if artifactsApiAllowInsecureTLS && storage:managementSecureSocket(false) !is () {
+        log:printWarn("artifactsApiTrustStorePath is set, but the top-level artifactsApiAllowInsecureTLS "
+            + "is true: console management calls (artifact source, WSDL, loggers, MI users) skip "
+            + "certificate validation and do not use the truststore");
+    }
     authBackendClient = check new (ldapUserStoreEnabled ? ldapAuthBackendUrl : authBackendUrl,
         secureSocket = authBackendSecureSocket,
         auth = authBackendJwtConfig
@@ -84,6 +89,13 @@ function init() returns error? {
 
     // Initialize the runtime scheduler
     check initRuntimeScheduler();
+
+    // Desired state an earlier version accepted but could never dispatch would otherwise warn on
+    // every reconcile pass. A failure here must not keep the server from starting.
+    error? repaired = storage:repairMIDesiredState();
+    if repaired is error {
+        log:printWarn("Failed to repair MI desired state", 'error = repaired);
+    }
 
     logMIAccessMode();
     if miTunnelEnabled {

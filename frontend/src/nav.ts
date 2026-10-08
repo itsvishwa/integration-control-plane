@@ -66,10 +66,11 @@ function scopeValue(scope: Scope, level: Level): string {
   return '';
 }
 
+// Handlers are encoded so a legacy one containing '/', '..' or spaces stays a single path segment.
 function scopePrefix(scope: Scope): string {
   const idx = LEVEL_CHAIN.indexOf(scope.level);
   return LEVEL_CHAIN.slice(0, idx + 1)
-    .map((l) => `/${l}/${scopeValue(scope, l)}`)
+    .map((l) => `/${l}/${encodeURIComponent(scopeValue(scope, l))}`)
     .join('');
 }
 
@@ -124,15 +125,15 @@ export function sidebarItems(scope: Scope, currentResource: Resource | null): Si
 }
 
 export function newProjectUrl(scope: { org: string }): string {
-  return `/organizations/${scope.org}/projects/new`;
+  return `/organizations/${encodeURIComponent(scope.org)}/projects/new`;
 }
 
 export function newEnvironmentUrl(scope: { org: string }): string {
-  return `/organizations/${scope.org}/environments/new`;
+  return `/organizations/${encodeURIComponent(scope.org)}/environments/new`;
 }
 
 export function newComponentUrl(scope: { org: string; project: string }): string {
-  return `/organizations/${scope.org}/projects/${scope.project}/components/new`;
+  return `/organizations/${encodeURIComponent(scope.org)}/projects/${encodeURIComponent(scope.project)}/components/new`;
 }
 
 // ---------------------------------------------------------------------------

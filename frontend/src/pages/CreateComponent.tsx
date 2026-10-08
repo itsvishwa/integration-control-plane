@@ -27,13 +27,7 @@ import TechnologySelector from '../components/TechnologySelector';
 import { integrationTypesFor, resolveComponentSubType, resolveDisplayType, type IntegrationType } from '../constants/integrationTypes';
 import type { Technology } from '../constants/technologies';
 import { resourceUrl, narrow, type ProjectScope } from '../nav';
-
-function toHandler(name: string) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+import { HANDLER_RULE, isValidHandler, toHandler } from '../utils/handler';
 
 export default function CreateComponent(scope: ProjectScope): JSX.Element {
   const navigate = useNavigate();
@@ -50,6 +44,8 @@ export default function CreateComponent(scope: ProjectScope): JSX.Element {
 
   const effectiveHandler = handlerEdited ? handler : toHandler(displayName);
   const nameError = displayName.trim() && (effectiveHandler.length < 3 || effectiveHandler.length > 64);
+  // Only a hand-edited name can break the rule; the generated one always follows it.
+  const handlerInvalid = handlerEdited && effectiveHandler !== '' && !isValidHandler(effectiveHandler);
 
   const errorMessage = mutation.error?.message?.toLowerCase() || '';
   const isDuplicateError = !!mutation.error && (/already taken/i.test(mutation.error.message) || errorMessage.includes('already exists') || errorMessage.includes('duplicate'));
@@ -125,6 +121,8 @@ export default function CreateComponent(scope: ProjectScope): JSX.Element {
             }}
             fullWidth
             disabled={!handlerEdited}
+            error={handlerInvalid}
+            helperText={handlerInvalid ? HANDLER_RULE : undefined}
             slotProps={{
               htmlInput: { 'aria-label': 'Name' },
               input: {
@@ -185,7 +183,7 @@ export default function CreateComponent(scope: ProjectScope): JSX.Element {
         <Button variant="outlined" onClick={() => navigate(resourceUrl(scope, 'overview'))}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={submit} disabled={!displayName.trim() || effectiveHandler.length < 3 || effectiveHandler.length > 64 || mutation.isPending}>
+        <Button variant="contained" onClick={submit} disabled={!displayName.trim() || effectiveHandler.length < 3 || effectiveHandler.length > 64 || handlerInvalid || mutation.isPending}>
           Create
         </Button>
       </Stack>

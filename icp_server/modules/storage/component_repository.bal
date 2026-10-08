@@ -117,6 +117,8 @@ public isolated function createComponent(types:ComponentInput component) returns
     string? componentSubType = component?.componentSubType;
 
     check validateIntegrationMetadata(componentTypeValue, displayType, componentSubType);
+    // The component name is its handler in console URLs.
+    check validateHandler("Component name", component.name, MAX_COMPONENT_HANDLER_LENGTH);
 
     sql:ParameterizedQuery insertQuery = `INSERT INTO components (component_id, project_id, name, display_name, description, component_type, display_type, component_sub_type, created_by)
                                           VALUES (${componentId}, ${component.projectId}, ${component.name}, ${displayName}, ${component.description}, ${componentTypeValue}, ${displayType}, ${componentSubType}, ${component.createdBy})`;
@@ -641,18 +643,16 @@ public isolated function deleteComponent(string componentId) returns error? {
     return ();
 }
 
-// Update component name and/or description
+// Update component display name and/or description. The name is the component handler and is
+// immutable once the component is created, so it can't be updated here.
 // `displayType` and `componentSubType` are written as a pair: a subtype only
 // qualifies a display_type, so passing a displayType clears any stale subtype when
 // componentSubType is nil. Passing displayType as nil leaves both columns alone.
-public isolated function updateComponent(string componentId, string? name, string? displayName, string? description, string updatedBy,
+public isolated function updateComponent(string componentId, string? displayName, string? description, string updatedBy,
         string? displayType = (), string? componentSubType = ()) returns error? {
     sql:ParameterizedQuery whereClause = ` WHERE component_id = ${componentId} `;
     sql:ParameterizedQuery updateFields = ` SET updated_at = CURRENT_TIMESTAMP, updated_by = ${updatedBy} `;
 
-    if name is string {
-        updateFields = sql:queryConcat(updateFields, `, name = ${name} `);
-    }
     if displayName is string {
         updateFields = sql:queryConcat(updateFields, `, display_name = ${displayName} `);
     }
@@ -677,14 +677,6 @@ public isolated function updateComponent(string componentId, string? name, strin
         }
     }
     log:printInfo(string `Successfully updated component ${componentId}`);
-
-    if name is string {
-        error? cascadeErr = updateOrgSecretsComponentName(componentId, name);
-        if cascadeErr is error {
-            log:printError(string `Failed to cascade component name change to org_secrets for ${componentId}`, 'error = cascadeErr);
-        }
-    }
-
     return ();
 }
 

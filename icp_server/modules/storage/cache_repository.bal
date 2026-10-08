@@ -170,8 +170,9 @@ public isolated function completeCacheFetch(string cacheKey, string token,
 
 # Records that a fetch failed. Fenced exactly like a success.
 #
-# A row that already holds a data keeps it: a failed refresh is a reason to go on
-# serving the last good answer, not to throw it away.
+# A row that already holds a good answer keeps it: a failed refresh is a reason to go on
+# serving the last good answer, not to throw it away. A row that has only ever failed has no
+# good answer to keep, so a failed retry replaces its failure with the newer one.
 #
 # + cacheKey - The data's key
 # + token - The attempt this failure belongs to
@@ -180,11 +181,14 @@ public isolated function completeCacheFetch(string cacheKey, string token,
 # + return - `true` when recorded, `false` when discarded as superseded, or an error
 public isolated function failCacheFetch(string cacheKey, string token,
         string errorPayload, int expiresAt) returns boolean|error {
+    // `data` is assigned before `status`: MySQL evaluates SET assignments left to right, each
+    // seeing the ones before it, so testing `status` after changing it would never store the error.
     sql:ExecutionResult|sql:Error result = dbClient->execute(`
         UPDATE cache_entry
-        SET status = CASE WHEN status = ${types:CACHE_FETCHING}
+        SET data = CASE WHEN status IN (${types:CACHE_FETCHING}, ${types:CACHE_FAILED})
+                        THEN ${errorPayload} ELSE data END,
+            status = CASE WHEN status = ${types:CACHE_FETCHING}
                           THEN ${types:CACHE_FAILED} ELSE status END,
-            data = CASE WHEN status = ${types:CACHE_FETCHING} THEN ${errorPayload} ELSE data END,
             expires_at = ${expiresAt}, token = NULL, claimed_at = NULL
         WHERE cache_key = ${cacheKey} AND token = ${token}
     `);

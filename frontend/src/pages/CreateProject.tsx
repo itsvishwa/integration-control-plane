@@ -23,13 +23,7 @@ import { useNavigate } from 'react-router';
 import { useCreateProject, type CreateProjectInput } from '../api/mutations';
 import { useProjectHandlerAvailability } from '../api/queries';
 import { resourceUrl, narrow, type OrgScope } from '../nav';
-
-function toHandler(name: string) {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
+import { HANDLER_RULE, isValidHandler, toHandler } from '../utils/handler';
 
 export default function CreateProject(scope: OrgScope): JSX.Element {
   const navigate = useNavigate();
@@ -53,6 +47,7 @@ export default function CreateProject(scope: OrgScope): JSX.Element {
   }, [effectiveHandler]);
 
   const handlerMissing = !effectiveHandler.trim() && (!!displayName.trim() || handlerEdited);
+  const handlerInvalid = !handlerMissing && effectiveHandler !== '' && !isValidHandler(effectiveHandler);
   const availability = useProjectHandlerAvailability(1, debouncedHandler);
   const handlerTaken = debouncedHandler !== '' && availability.data?.handlerUnique === false;
 
@@ -124,8 +119,8 @@ export default function CreateProject(scope: OrgScope): JSX.Element {
             }}
             fullWidth
             disabled={!handlerEdited}
-            error={handlerMissing || handlerTaken}
-            helperText={handlerMissing ? 'Name must include at least one letter or number.' : handlerTaken ? 'This handler is already taken. Please choose a different one.' : undefined}
+            error={handlerMissing || handlerInvalid || handlerTaken}
+            helperText={handlerMissing ? 'Name must include at least one letter or number.' : handlerInvalid ? HANDLER_RULE : handlerTaken ? 'This handler is already taken. Please choose a different one.' : undefined}
             slotProps={{
               htmlInput: { 'aria-label': 'Name' },
               input: {
@@ -155,7 +150,7 @@ export default function CreateProject(scope: OrgScope): JSX.Element {
         <Button variant="outlined" onClick={() => navigate(resourceUrl(scope, 'overview'))}>
           Cancel
         </Button>
-        <Button variant="contained" onClick={submit} disabled={!displayName.trim() || handlerMissing || mutation.isPending || handlerTaken}>
+        <Button variant="contained" onClick={submit} disabled={!displayName.trim() || handlerMissing || handlerInvalid || mutation.isPending || handlerTaken}>
           Create
         </Button>
       </Stack>

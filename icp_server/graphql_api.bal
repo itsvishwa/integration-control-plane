@@ -2239,7 +2239,8 @@ service /graphql on graphqlListener {
         return true;
     }
 
-    // Update environment name, description, and/or critical status (requires management permission)
+    // Update environment name, description, and/or critical status (requires management permission).
+    // `handler` is only accepted when it equals the current handler, because handlers are immutable.
     isolated remote function updateEnvironment(graphql:Context context, string environmentId, string? name, string? handler, string? description, boolean? critical) returns types:Environment?|error {
         types:UserContextV2 userContext = check extractUserContext(context);
 
@@ -2270,7 +2271,14 @@ service /graphql on graphqlListener {
             }
         }
 
-        check storage:updateEnvironment(environmentId, name, handler, description, critical);
+        // The handler is immutable: runtimes name their environment by handler in their config, and
+        // heartbeats are resolved by it. Resending the current value is accepted so clients that send
+        // every field still work.
+        if handler is string && handler.trim() != currentEnv.handler {
+            return error("Environment handler cannot be changed");
+        }
+
+        check storage:updateEnvironment(environmentId, name, description, critical);
         types:Environment? updated = check storage:getEnvironmentById(environmentId);
         storage:logAuditEvent(storage:AUDIT_ENVIRONMENT_UPDATE, userId = userContext.userId,
                 resourceType = storage:AUDIT_RESOURCE_ENVIRONMENT, resourceId = environmentId,
@@ -2546,7 +2554,7 @@ service /graphql on graphqlListener {
             return error("Insufficient permissions to create component in this project");
         }
 
-        // Validate component name format (3-64 characters, alphanumeric, hyphens, underscores)
+        // Validate component name length (3-64 characters); storage:createComponent enforces the format
         if component.name.length() < 3 || component.name.length() > 64 {
             return error("Component name must be between 3 and 64 characters");
         }
@@ -3081,12 +3089,21 @@ service /graphql on graphqlListener {
             return error("Insufficient permissions to update this component");
         }
 
+        types:Component current = check storage:getComponentById(targetComponentId);
+
+        // The name is the component handler and is immutable: runtimes name their integration by it
+        // in their config, and console URLs use it. Resending the current value is accepted so clients
+        // that send every field still work.
+        if targetName is string && targetName != current.name {
+            return error("Component name cannot be changed");
+        }
+
         // Call the existing backend method to maintain consistency
-        check storage:updateComponent(targetComponentId, targetName, targetDisplayName, targetDescription, userContext.userId,
+        check storage:updateComponent(targetComponentId, targetDisplayName, targetDescription, userContext.userId,
                 component.displayType, component.componentSubType);
         storage:logAuditEvent(storage:AUDIT_COMPONENT_UPDATE, userId = userContext.userId,
                 resourceType = storage:AUDIT_RESOURCE_COMPONENT, resourceId = targetComponentId,
-                details = string `Component '${targetName ?: targetComponentId}' updated by '${userContext.username}'`,
+                details = string `Component '${current.name}' updated by '${userContext.username}'`,
                 clientIp = userContext.clientIp, userAgent = userContext.userAgent);
         return check storage:getComponentById(targetComponentId);
     }
@@ -3187,6 +3204,23 @@ service /graphql on graphqlListener {
             return error("Insufficient permissions to change artifact tracing");
         }
 
+        // Reject types MI cannot trace before anything is persisted, as updateArtifactStatus does.
+        // No request can be built for them, so proceeding would report SUCCESS and store a
+        // desired state that every reconcile pass fails to dispatch.
+        string normalizedType = storage:normalizeArtifactType(input.artifactType);
+        if !storage:supportsTraceAndStatistics(normalizedType) {
+            log:printWarn("Rejected tracing change for unsupported artifact type",
+                    artifactType = normalizedType, artifactName = input.artifactName,
+                    componentId = input.componentId);
+            return {
+                status: types:FAILED,
+                message: string `Tracing change is not supported for artifact type '${normalizedType}'. Supported types: ${storage:traceAndStatisticsSupportedTypes()}.`,
+                successCount: 0,
+                failedCount: 0,
+                details: []
+            };
+        }
+
         types:Runtime[] runtimes = check storage:getRuntimes((), "MI", input.environmentId, component.projectId, input.componentId);
         if runtimes.length() == 0 {
             log:printWarn("No MI runtimes found for component", componentId = input.componentId);
@@ -3232,11 +3266,19 @@ service /graphql on graphqlListener {
 
         // Validate the canonical spelling, not the caller's. Matching the raw value here would
         // reject a supported type sent as "Proxy-Service" before it could be normalized.
+        // The list and the message come from the same source as dispatch, so they cannot disagree.
         string normalizedType = storage:normalizeArtifactType(input.artifactType);
-        string[] supportedTypes = ["proxy-service", "endpoint", "api", "sequence", "inbound-endpoint"];
-        boolean isSupported = supportedTypes.indexOf(normalizedType) != ();
-        if !isSupported {
-            return error(string `Artifact type '${normalizedType}' does not support statistics. Supported types: ProxyService, Endpoint, RestApi, Sequence, InboundEndpoint`);
+        if !storage:supportsTraceAndStatistics(normalizedType) {
+            log:printWarn("Rejected statistics change for unsupported artifact type",
+                    artifactType = normalizedType, artifactName = input.artifactName,
+                    componentId = input.componentId);
+            return {
+                status: types:FAILED,
+                message: string `Statistics change is not supported for artifact type '${normalizedType}'. Supported types: ${storage:traceAndStatisticsSupportedTypes()}.`,
+                successCount: 0,
+                failedCount: 0,
+                details: []
+            };
         }
 
         types:Runtime[] runtimes = check storage:getRuntimes((), "MI", input.environmentId, component.projectId, input.componentId);
@@ -3565,7 +3607,7 @@ service /graphql on graphqlListener {
         return {
             ...fetchableOf(answer),
             content: check mi_management:fetchWsdlContent(wsdlUrl, trustedHost,
-                    artifactsApiAllowInsecureTLS)
+                    storage:managementSecureSocket(artifactsApiAllowInsecureTLS))
         };
     }
 
