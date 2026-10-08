@@ -31,10 +31,24 @@ final sql:Client dbClient = check createDbClient();
 final string resolvedArtifactsApiTrustStorePassword = check loadArtifactsApiTrustStore();
 
 function createDbClient() returns sql:Client|error {
-    string resolvedUser = check utils:resolveConfig(dbUser, secrets);
-    string resolvedPassword = check utils:resolveConfig(dbPassword, secrets);
+    map<string> dbSecrets = check resolveSecretsTable(dbUser, dbPassword);
+    string resolvedUser = check utils:resolveConfig(dbUser, dbSecrets);
+    string resolvedPassword = check utils:resolveConfig(dbPassword, dbSecrets);
     DatabaseConnectionManager dbManager = check new (dbType, dbHost, dbPort, dbName, resolvedUser, resolvedPassword, dbUseTLS);
     return dbManager.getClient();
+}
+
+// Aliases come from the top-level [secrets] table (the one the cipher tool encrypts), with
+// [icp_server.storage.secrets] taking precedence. The TOML config is read only when an alias is used.
+function resolveSecretsTable(string... configValues) returns map<string>|error {
+    if !configValues.some(v => utils:isSecretAlias(v)) {
+        return secrets;
+    }
+    map<string> merged = check utils:readTopLevelSecrets();
+    foreach [string, string] [alias, value] in secrets.entries() {
+        merged[alias] = value;
+    }
+    return merged;
 }
 
 function loadArtifactsApiTrustStore() returns string|error {
@@ -44,7 +58,8 @@ function loadArtifactsApiTrustStore() returns string|error {
     if !check file:test(artifactsApiTrustStorePath, file:EXISTS) {
         return error(string `artifactsApiTrustStorePath does not exist: ${artifactsApiTrustStorePath}`);
     }
-    string password = check utils:resolveConfig(artifactsApiTrustStorePassword, secrets);
+    map<string> trustStoreSecrets = check resolveSecretsTable(artifactsApiTrustStorePassword);
+    string password = check utils:resolveConfig(artifactsApiTrustStorePassword, trustStoreSecrets);
     check validateTrustStore(artifactsApiTrustStorePath, password);
     if artifactsApiAllowInsecureTLS {
         log:printWarn("artifactsApiTrustStorePath is set, but artifactsApiAllowInsecureTLS is true in "

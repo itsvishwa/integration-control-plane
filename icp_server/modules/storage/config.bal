@@ -46,6 +46,7 @@ configurable string artifactsApiTrustStorePath = "";
 configurable string artifactsApiTrustStorePassword = "";
 
 // Secrets map for the storage module — populated from [icp_server.storage.secrets] in Config.toml.
+// Aliases are also resolved from the top-level [secrets] table (see createDbClient).
 configurable map<string> secrets = {};
 
 // Runtime auth configuration (runtime and server communication)
