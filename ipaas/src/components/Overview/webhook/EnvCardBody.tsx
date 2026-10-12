@@ -16,12 +16,14 @@
  * under the License.
  */
 
-import { Box, CircularProgress, Divider, Typography } from '@wso2/oxygen-ui';
+import { Box, CircularProgress, Divider, Stack, Typography } from '@wso2/oxygen-ui';
 import { useState, type ReactNode } from 'react';
+import { IS_CLOUD } from '../../../features';
 import { useEnvEndpoints } from '../../../hooks/useDeployments';
 import type { EnvCardBodyProps } from '../../../types/integration';
 import EnvCardSkeleton from '../_shared/EnvCardSkeleton';
 import EndpointUrlsPanel from '../_shared/EndpointUrlsPanel';
+import EndpointSettingsActions from '../../EndpointSettings/EndpointSettingsActions';
 import ServiceInsights from '../integration-as-api/ServiceInsights';
 
 /**
@@ -30,7 +32,7 @@ import ServiceInsights from '../integration-as-api/ServiceInsights';
  * service card's, but without the OpenAPI/swagger viewer (webhooks publish no
  * contract). Matches Devant's webhook overview.
  */
-export default function EnvCardBody({ component, env, projectId, versionId, releaseId, hasDeployment, loadingDeployment, deploymentStatusV2 }: EnvCardBodyProps): ReactNode {
+export default function EnvCardBody({ component, env, projectId, versionId, releaseId, hasDeployment, loadingDeployment, deploymentStatusV2, onNotify, requestPoll }: EnvCardBodyProps): ReactNode {
   const { data: envEndpoints = [] } = useEnvEndpoints(component.id, versionId, releaseId);
   const [selectedEpIdx, setSelectedEpIdx] = useState(0);
   const activeEndpoint = envEndpoints[selectedEpIdx] ?? envEndpoints[0];
@@ -53,6 +55,13 @@ export default function EnvCardBody({ component, env, projectId, versionId, rele
       )}
 
       {showEndpointPanel && deploymentStatusV2 !== 'IN_PROGRESS' && <EndpointUrlsPanel endpoints={envEndpoints} selectedIdx={selectedEpIdx} onSelect={setSelectedEpIdx} componentId={component.id} deploymentTrackId={versionId} />}
+
+      {/* Cloud: the selected endpoint's visibility and gateway policies. */}
+      {IS_CLOUD && showEndpointPanel && deploymentStatusV2 !== 'IN_PROGRESS' && !!activeEndpoint && (
+        <Stack direction="row" justifyContent="flex-end" gap={1.5} sx={{ mb: 2 }}>
+          <EndpointSettingsActions componentId={component.id} projectId={projectId} versionId={versionId} envName={env.id} endpoints={envEndpoints} activeEndpointName={activeEndpoint.id} onNotify={onNotify} requestPoll={requestPoll} />
+        </Stack>
+      )}
 
       {notDeployed && deploymentStatusV2 !== 'IN_PROGRESS' && (
         <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>

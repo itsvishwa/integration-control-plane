@@ -41,7 +41,7 @@ import {
   Switch,
   Typography,
 } from '@wso2/oxygen-ui';
-import { ChevronDown, Rocket, Settings } from '@wso2/oxygen-ui-icons-react';
+import { ChevronDown, Rocket, Settings, ShieldCheck } from '@wso2/oxygen-ui-icons-react';
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -49,6 +49,7 @@ import { useDeployDeploymentTrack } from '../../hooks/useDeployments';
 import { useUpdateAutoDeployEnabled } from '../../hooks/useComponents';
 import { useComponentDeployment, useDeploymentStatus, useDeploymentTrackImages } from '../../hooks/useDeployments';
 import type { DeploymentTrackImage } from '../../types/deployment';
+import { IS_CLOUD } from '../../features';
 import ConfigureDrawer from '../EnvironmentCard/ConfigureDrawer';
 import BuildAreaImageDrawer from './BuildAreaImageDrawer';
 import BuildImageCard from './BuildImageCard';
@@ -267,10 +268,11 @@ export default function BuildArea({
           />
 
           {/* ── Endpoint Configurations (only for deployed service integrations;
-               hidden for file/event/AI-agent, which have no endpoints) ── */}
+               hidden for file/event/AI-agent, which have no endpoints). Cloud's
+               drawer configures security only, so the label says so. ── */}
           {!flags.isAutomation && !hideEndpoints && !!firstEnvReleaseId && (
-            <Button variant="text" size="small" startIcon={<Settings size={14} />} onClick={() => setEndpointConfigOpen(true)} sx={{ mb: 2, width: '100%', justifyContent: 'flex-start' }}>
-              Endpoint Configurations
+            <Button variant="text" size="small" startIcon={IS_CLOUD ? <ShieldCheck size={14} /> : <Settings size={14} />} onClick={() => setEndpointConfigOpen(true)} sx={{ mb: 2, width: '100%', justifyContent: 'flex-start' }}>
+              {IS_CLOUD ? 'Configure Security' : 'Endpoint Configurations'}
             </Button>
           )}
 

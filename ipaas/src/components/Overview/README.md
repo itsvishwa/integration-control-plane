@@ -64,6 +64,11 @@ Overview/
 > level, _not_ under `overview/`) because two surfaces consume it: the ai-agent
 > `EnvCardBody` here and the Test page (`pages/AgentChatConsole.tsx`, route
 > `test/agent-chat`). Its message/connection types are in `src/types/agentChat.ts`.
+>
+> Likewise the cloud endpoint settings (visibility, policies, security drawers and the
+> `EndpointSettingsActions` button group) live in **`src/components/EndpointSettings/`**:
+> the integration-as-api, webhook and mcp-server bodies use them here, and the Deploy page
+> uses the policies and security drawers.
 
 ## The model in one line
 

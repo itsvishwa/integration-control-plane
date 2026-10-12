@@ -81,6 +81,15 @@ export function resolveEndpointInvokeUrl(endpoint: EnvEndpoint | undefined): str
 /** Environment endpoints as the options the cloud API drawers select from. */
 export const toEndpointOptions = (endpoints: EnvEndpoint[]): EndpointOption[] => endpoints.map((ep) => ({ name: ep.id, displayName: ep.displayName || ep.id }));
 
+/** The endpoint's network visibilities (UI labels); a payload without the list carries only `visibility`. */
+export const endpointVisibilities = (ep: EnvEndpoint): string[] => (ep.networkVisibilities?.length ? ep.networkVisibilities : ep.visibility ? [ep.visibility] : []);
+
+/** Ticks a visibility on, or off when it is already set. */
+export const toggleVisibility = (visibilities: string[], key: string): string[] => (visibilities.includes(key) ? visibilities.filter((v) => v !== key) : [...visibilities, key]);
+
+/** Whether two visibility selections hold the same labels, in any order. */
+export const isSameVisibilities = (a: string[], b: string[]): boolean => a.length === b.length && a.every((v) => b.includes(v));
+
 export type VisibilityKey = 'public' | 'organization' | 'project';
 
 export interface EndpointVisibilityUrl {

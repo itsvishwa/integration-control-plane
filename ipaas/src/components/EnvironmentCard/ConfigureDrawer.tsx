@@ -16,7 +16,7 @@
  * under the License.
  */
 
-import { Alert, Box, Button, Checkbox, Chip, CircularProgress, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Drawer, IconButton, MenuItem, Select as MuiSelect, Stack, Typography } from '@wso2/oxygen-ui';
+import { Alert, Box, Button, Chip, CircularProgress, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Drawer, IconButton, MenuItem, Select as MuiSelect, Stack, Typography } from '@wso2/oxygen-ui';
 import TextField from '../common/TextField';
 import { ChevronDown, ChevronUp, Link, Trash2, X } from '@wso2/oxygen-ui-icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -29,10 +29,9 @@ import { useGenerateComponentEndpoints, useUpdateEndpoint } from '../../hooks/us
 import { useSaveSchemaConfig, usePostCertificateMappings } from '../../hooks/useConfiguration';
 import { useDeployDeploymentTrack } from '../../hooks/useDeployments';
 import ManageDrawer from './ManageDrawer';
-import ApiSettingsDrawer from '../Overview/integration-as-api/ApiSettingsDrawer';
 import { IS_CLOUD } from '../../features';
-import { toEndpointOptions } from '../../utils/endpoints';
-import { EndpointCard, VISIBILITY_OPTS } from '../EndpointCard';
+import { EndpointCard } from '../EndpointCard';
+import VisibilityOptions from '../EndpointSettings/VisibilityOptions';
 import { ConfigForm, type BaseType, type LinkingInfo, type JSONSchema } from '../SchemaConfigForm';
 import ImportConfigTomlButton from '../ImportConfigTomlButton';
 
@@ -101,10 +100,6 @@ function ManageEndpoint({ ep, componentId, projectId, versionId, releaseId, onBa
   const [saveError, setSaveError] = useState<string | null>(null);
   const updateEp = useUpdateEndpoint();
 
-  const handleToggle = (key: string) => {
-    setVisibilities((prev) => (prev.includes(key) ? prev.filter((v) => v !== key) : [...prev, key]));
-  };
-
   const handleSave = () => {
     setSaveError(null);
     updateEp.mutate(
@@ -143,41 +138,7 @@ function ManageEndpoint({ ep, componentId, projectId, versionId, releaseId, onBa
       <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
         Network Visibility
       </Typography>
-      <Stack gap={1} sx={{ mb: 2 }}>
-        {VISIBILITY_OPTS.map(({ key, label, Icon, description }) => {
-          const checked = visibilities.includes(key);
-          return (
-            <Box
-              key={key}
-              onClick={() => handleToggle(key)}
-              sx={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 1.25,
-                p: 1.5,
-                border: '1px solid',
-                borderColor: checked ? 'primary.main' : 'divider',
-                borderRadius: 1,
-                cursor: 'pointer',
-                transition: 'border-color 0.15s',
-                '&:hover': { borderColor: 'primary.main' },
-              }}>
-              <Box sx={{ display: 'flex', color: 'primary.main', mt: 0.25, flexShrink: 0 }}>
-                <Icon size={18} />
-              </Box>
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                  {label}
-                </Typography>
-                <Typography variant="caption" color="text.secondary">
-                  {description}
-                </Typography>
-              </Box>
-              <Checkbox checked={checked} size="small" sx={{ p: 0, flexShrink: 0, mt: 0.25 }} onClick={(e) => e.stopPropagation()} onChange={() => handleToggle(key)} />
-            </Box>
-          );
-        })}
-      </Stack>
+      <VisibilityOptions value={visibilities} onChange={setVisibilities} sx={{ mb: 2 }} />
 
       {saveError && (
         <Alert severity="error" sx={{ mb: 1 }}>
@@ -886,7 +847,10 @@ function GenericServiceConfigureDrawer({
   // ConfigurationWizard, not the ConfigEndpointWizard). Their flow is the same
   // 2-step shape automation uses — Configurations + Certificate Mount, Apply on
   // step 2 — but stays on the service save path, not automation's cron deploy.
-  const lastStep = hideEndpoints ? 2 : 3;
+  // Cloud drops the Endpoints step too: visibility and policies are set from the
+  // env card's own actions.
+  const showEndpointsStep = !hideEndpoints && !IS_CLOUD;
+  const lastStep = showEndpointsStep ? 3 : 2;
   const [step, setStep] = useState(1);
   const [valueMap, setValueMap] = useState<Map<string, BaseType>>(new Map());
   const [validationMap, setValidationMap] = useState<Map<string, boolean>>(new Map());
@@ -910,7 +874,7 @@ function GenericServiceConfigureDrawer({
   const { data, isLoading, isError } = useSchemaConfig(projectId, componentId, schemaEnvId, versionId, commitHash);
   const { data: existingCertMappings } = useCertificateMappings(projectId, componentId, schemaEnvId, versionId, open);
   const { data: configGroups } = useConfigGroups(projectId, componentId, open);
-  const { data: endpoints = [] } = useEnvEndpoints(open && !hideEndpoints ? componentId : '', open && !hideEndpoints ? versionId : '', open && !hideEndpoints && releaseId ? releaseId : '');
+  const { data: endpoints = [] } = useEnvEndpoints(open && showEndpointsStep ? componentId : '', open && showEndpointsStep ? versionId : '', open && showEndpointsStep && releaseId ? releaseId : '');
   const save = useSaveSchemaConfig();
   const saveCertMappings = usePostCertificateMappings();
   const generateEp = useGenerateComponentEndpoints();
@@ -1119,9 +1083,9 @@ function GenericServiceConfigureDrawer({
   const handleNext = () => {
     setSaveError(null);
     if (step === 1) {
-      // File/event have no endpoints — skip endpoint generation and go
-      // straight to Certificate Mount (the final step for them).
-      if (hideEndpoints || !releaseId || !commitHash) {
+      // Endpoints are generated only to fill the Endpoints step — skip it when
+      // that step is not shown and go straight to Certificate Mount.
+      if (!showEndpointsStep || !releaseId || !commitHash) {
         setStep(2);
         return;
       }
@@ -1132,7 +1096,7 @@ function GenericServiceConfigureDrawer({
           onError: (err) => setSaveError(err instanceof Error ? err.message : 'Failed to prepare endpoints'),
         },
       );
-    } else if (step === 2 && !hideEndpoints) {
+    } else if (step === 2 && showEndpointsStep) {
       setStep(3);
     } else {
       handleApply();
@@ -1267,7 +1231,7 @@ function GenericServiceConfigureDrawer({
         </Stack>
 
         {/* Step indicator */}
-        <StepIndicator step={step} steps={hideEndpoints ? AUTOMATION_STEPS : SERVICE_STEPS} />
+        <StepIndicator step={step} steps={showEndpointsStep ? SERVICE_STEPS : AUTOMATION_STEPS} />
 
         {/* Scrollable content */}
         <Box sx={{ flex: 1, overflow: 'auto', px: 2, py: 2 }}>{stepContent}</Box>
@@ -1290,11 +1254,7 @@ function GenericServiceConfigureDrawer({
         )}
       </Drawer>
 
-      {IS_CLOUD ? (
-        <ApiSettingsDrawer open={manageDrawerOpen} onClose={() => setManageDrawerOpen(false)} componentName={componentId} envName={envId} endpoints={toEndpointOptions(endpoints)} activeEndpointName={settingsEp?.id} />
-      ) : (
-        <ManageDrawer open={manageDrawerOpen} onClose={() => setManageDrawerOpen(false)} apimId={settingsEp?.apimId ?? null} />
-      )}
+      {!IS_CLOUD && <ManageDrawer open={manageDrawerOpen} onClose={() => setManageDrawerOpen(false)} apimId={settingsEp?.apimId ?? null} />}
     </>
   );
 }

@@ -29,7 +29,7 @@ import { buildEndpointSecurityState, extractScopesFromSwagger, toggleSchemeToken
 import { getHttpMethodColors } from '../../utils/httpMethods';
 import type { EndpointSecurityState } from '../../types/deploy';
 import TagInput from './TagInput';
-import ApiSecurityDrawer from '../Overview/integration-as-api/ApiSecurityDrawer';
+import EndpointSecurityDrawer from '../EndpointSettings/EndpointSecurityDrawer';
 import { IS_CLOUD } from '../../features';
 import { toEndpointOptions } from '../../utils/endpoints';
 
@@ -346,9 +346,10 @@ export default function EndpointConfigDrawer({ open, onClose, componentId, versi
 
   const selectedEp: EnvEndpoint | null = endpoints[selectedIdx] ?? null;
 
-  // The panel below edits an APIM API object, which cloud has none of.
+  // The panel below edits an APIM API object, which cloud has none of. No endpoint is picked on
+  // this page, so the drawer lets the user choose one.
   if (IS_CLOUD) {
-    return <ApiSecurityDrawer open={open} onClose={handleClose} componentName={componentId} envName={firstEnvId ?? ''} endpoints={toEndpointOptions(endpoints)} activeEndpointName={selectedEp?.id} />;
+    return <EndpointSecurityDrawer open={open} onClose={handleClose} componentName={componentId} envName={firstEnvId ?? ''} endpoints={toEndpointOptions(endpoints)} />;
   }
 
   return (

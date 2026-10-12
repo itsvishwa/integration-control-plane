@@ -21,7 +21,7 @@ import { X } from '@wso2/oxygen-ui-icons-react';
 import { useState } from 'react';
 import type { EnvEndpoint } from '../../../types/component';
 import { EndpointCard } from '../../EndpointCard';
-import ApiSettingsDrawer from '../../Overview/integration-as-api/ApiSettingsDrawer';
+import EndpointPoliciesDrawer from '../../EndpointSettings/EndpointPoliciesDrawer';
 import { IS_CLOUD } from '../../../features';
 import { toEndpointOptions } from '../../../utils/endpoints';
 import ManageDrawer from '../../EnvironmentCard/ManageDrawer';
@@ -94,13 +94,13 @@ export default function EndpointsDrawer({ open, onClose, endpoints, isLoading, e
               </Typography>
             </Box>
           ) : (
-            endpoints.map((ep, idx) => <EndpointCard key={ep.id} ep={ep} defaultExpanded={idx === 0} readOnly onSettings={handleSettings} />)
+            endpoints.map((ep, idx) => <EndpointCard key={ep.id} ep={ep} defaultExpanded={idx === 0} readOnly onSettings={handleSettings} settingsLabel={IS_CLOUD ? 'Configure policies' : 'API settings'} />)
           )}
         </Box>
       </Drawer>
 
       {IS_CLOUD ? (
-        <ApiSettingsDrawer open={manageDrawerOpen} onClose={() => setManageDrawerOpen(false)} componentName={componentId ?? ''} envName={environmentId ?? ''} endpoints={toEndpointOptions(endpoints)} activeEndpointName={selectedEndpoint?.id} />
+        <EndpointPoliciesDrawer open={manageDrawerOpen} onClose={() => setManageDrawerOpen(false)} componentName={componentId ?? ''} envName={environmentId ?? ''} endpoints={toEndpointOptions(endpoints)} activeEndpointName={selectedEndpoint?.id} />
       ) : (
         <ManageDrawer
           open={manageDrawerOpen}

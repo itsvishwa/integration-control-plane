@@ -74,11 +74,13 @@ export interface EndpointCardProps {
   ep: EnvEndpoint;
   onEdit?: (ep: EnvEndpoint) => void;
   onSettings?: (ep: EnvEndpoint) => void;
+  /** Tooltip of the settings action — names what `onSettings` opens. */
+  settingsLabel?: string;
   defaultExpanded?: boolean;
   readOnly?: boolean;
 }
 
-export function EndpointCard({ ep, onEdit, onSettings, defaultExpanded = false, readOnly = false }: EndpointCardProps) {
+export function EndpointCard({ ep, onEdit, onSettings, settingsLabel = 'API settings', defaultExpanded = false, readOnly = false }: EndpointCardProps) {
   const [open, setOpen] = useState(defaultExpanded);
   const visRows = VISIBILITY_OPTS.map((v) => {
     const url = v.key === 'Public' ? ep.publicUrl || ep.defaultPublicUrl || ep.invokeUrl || '' : v.key === 'Organization' ? ep.organizationUrl || ep.defaultOrganizationUrl || '' : ep.projectUrl || '';
@@ -114,7 +116,7 @@ export function EndpointCard({ ep, onEdit, onSettings, defaultExpanded = false, 
         )}
         {/* Settings — always shown when provided (even in readOnly) */}
         {onSettings && (
-          <Tooltip title="API settings">
+          <Tooltip title={settingsLabel}>
             <IconButton
               size="small"
               sx={{ p: 0.5, flexShrink: 0 }}

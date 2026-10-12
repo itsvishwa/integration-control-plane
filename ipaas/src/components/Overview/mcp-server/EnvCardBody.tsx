@@ -29,6 +29,7 @@ import { isDeploymentHealthy } from '../../../utils/deploymentStatus';
 import type { EndpointRef } from '../../../types/consumers';
 import EnvCardSkeleton from '../_shared/EnvCardSkeleton';
 import EndpointUrlsPanel from '../_shared/EndpointUrlsPanel';
+import EndpointSettingsActions from '../../EndpointSettings/EndpointSettingsActions';
 import McpToolTile from './McpToolTile';
 
 /**
@@ -41,7 +42,7 @@ import McpToolTile from './McpToolTile';
  * (`useEndpointTestAccess`); the APIM products mint against the endpoint's apimId.
  * Shared by both MCP flavors (server-from-source and proxy) via the registry.
  */
-export default function EnvCardBody({ component, env, versionId, releaseId, hasDeployment, loadingDeployment, deploymentStatusV2 }: EnvCardBodyProps): ReactNode {
+export default function EnvCardBody({ component, env, projectId, versionId, releaseId, hasDeployment, loadingDeployment, deploymentStatusV2, onNotify, requestPoll }: EnvCardBodyProps): ReactNode {
   // Tools can only be listed once the server is actually deployed and running — an
   // in-progress deployment has no reachable `/mcp` endpoint yet, and a degraded one
   // (crash-looping, or never rendered) never will.
@@ -136,6 +137,13 @@ export default function EnvCardBody({ component, env, versionId, releaseId, hasD
       <Divider sx={{ my: 2 }} />
 
       {showEndpointPanel && <EndpointUrlsPanel endpoints={endpoints} selectedIdx={activeIdx} onSelect={setSelectedEpIdx} componentId={component.id} deploymentTrackId={versionId} externalUrlOverride={access.gatewayUrl || undefined} />}
+
+      {/* Cloud: the selected endpoint's visibility and gateway policies. */}
+      {IS_CLOUD && showEndpointPanel && !!activeEndpoint && (
+        <Stack direction="row" justifyContent="flex-end" gap={1.5} sx={{ mb: 2 }}>
+          <EndpointSettingsActions componentId={component.id} projectId={projectId} versionId={versionId} envName={env.id} endpoints={endpoints} activeEndpointName={activeEndpoint.id} onNotify={onNotify} requestPoll={requestPoll} />
+        </Stack>
+      )}
 
       {!isDeploymentReady ? (
         <Alert severity="info" sx={{ mt: 1.5 }}>

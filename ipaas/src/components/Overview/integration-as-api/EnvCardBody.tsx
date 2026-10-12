@@ -26,6 +26,7 @@ import { IS_CLOUD } from '../../../features';
 import type { EnvCardBodyProps } from '../../../types/integration';
 import EnvCardSkeleton from '../_shared/EnvCardSkeleton';
 import EndpointUrlsPanel from '../_shared/EndpointUrlsPanel';
+import EndpointSettingsActions from '../../EndpointSettings/EndpointSettingsActions';
 import ConsumersPanel from './ConsumersPanel';
 import ServiceInsights from './ServiceInsights';
 import SwaggerOperationsList, { type SwaggerDocument } from './SwaggerOperationsList';
@@ -37,7 +38,7 @@ import GraphqlOperationsList from './GraphqlOperationsList';
  * previous env" note), a not-deployed placeholder, and per-env service insights
  * for critical environments. The shared shell provides the Card/header chrome.
  */
-export default function EnvCardBody({ component, env, prevEnv, projectId, versionId, releaseId, orgHandler, hasDeployment, loadingDeployment, deploymentStatusV2 }: EnvCardBodyProps): ReactNode {
+export default function EnvCardBody({ component, env, prevEnv, projectId, versionId, releaseId, orgHandler, hasDeployment, loadingDeployment, deploymentStatusV2, onNotify, requestPoll }: EnvCardBodyProps): ReactNode {
   const orgUuid = useOrgUuid() ?? '';
 
   // Per-env endpoints for the current release.
@@ -127,11 +128,20 @@ export default function EnvCardBody({ component, env, prevEnv, projectId, versio
       )}
 
       {/* Cloud-only in-console API consumption: consumer applications and the
-          exposed API's security config. Keyed by the BFF's
+          endpoint's visibility, policies and security. Keyed by the BFF's
           component/environment/endpoint triple — in cloud the component name is
           the component id and the endpoint name is the endpoint id. */}
       {IS_CLOUD && showEndpointPanel && deploymentStatusV2 !== 'IN_PROGRESS' && !!activeEndpoint && (
-        <ConsumersPanel componentName={component.id} projectName={projectId} envName={env.id} envLabel={env.name} endpointName={activeEndpoint.id} endpoints={envEndpoints.map((ep) => ({ name: ep.id, displayName: ep.displayName || ep.id }))} />
+        <ConsumersPanel
+          componentName={component.id}
+          projectName={projectId}
+          envName={env.id}
+          envLabel={env.name}
+          endpointName={activeEndpoint.id}
+          settingsActions={
+            <EndpointSettingsActions componentId={component.id} projectId={projectId} versionId={versionId} envName={env.id} endpoints={envEndpoints} activeEndpointName={activeEndpoint.id} showSecurity onNotify={onNotify} requestPoll={requestPoll} />
+          }
+        />
       )}
 
       {showInsights && <ServiceInsights envName={env.name} envId={env.id} apimEnvId={env.apimEnvId} projectId={projectId} apiId={insightsApiId} />}

@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { getEndpointLabel, isBrowserReachable, resolveEndpointInvokeUrl, trimEndpointName, visibilityUrlOptions } from './endpoints';
+import { endpointVisibilities, getEndpointLabel, isBrowserReachable, isSameVisibilities, resolveEndpointInvokeUrl, toggleVisibility, trimEndpointName, visibilityUrlOptions } from './endpoints';
 import type { EnvEndpoint } from '../types/component';
 
 const ep = (partial: Partial<EnvEndpoint>): EnvEndpoint => ({ id: 'e', releaseId: 'r', environmentId: 'env', displayName: 'ep', type: 'GraphQL', visibility: 'Public', ...partial }) as EnvEndpoint;
@@ -149,5 +149,42 @@ describe('isBrowserReachable', () => {
     expect(isBrowserReachable('public')).toBe(true);
     expect(isBrowserReachable('organization')).toBe(false);
     expect(isBrowserReachable('project')).toBe(false);
+  });
+});
+
+describe('endpointVisibilities', () => {
+  it('reads the visibility list when the endpoint has one', () => {
+    expect(endpointVisibilities(ep({ networkVisibilities: ['Public', 'Project'], visibility: 'Public' }))).toEqual(['Public', 'Project']);
+  });
+
+  it('falls back to the single visibility when the list is missing or empty', () => {
+    expect(endpointVisibilities(ep({ visibility: 'Organization' }))).toEqual(['Organization']);
+    expect(endpointVisibilities(ep({ networkVisibilities: [], visibility: 'Project' }))).toEqual(['Project']);
+  });
+
+  it('is empty when the endpoint reports no visibility at all', () => {
+    expect(endpointVisibilities(ep({ networkVisibilities: [], visibility: '' }))).toEqual([]);
+  });
+});
+
+describe('toggleVisibility', () => {
+  it('adds a visibility that is not set', () => {
+    expect(toggleVisibility(['Public'], 'Project')).toEqual(['Public', 'Project']);
+  });
+
+  it('removes a visibility that is already set', () => {
+    expect(toggleVisibility(['Public', 'Project'], 'Public')).toEqual(['Project']);
+  });
+});
+
+describe('isSameVisibilities', () => {
+  it('ignores order', () => {
+    expect(isSameVisibilities(['Public', 'Project'], ['Project', 'Public'])).toBe(true);
+  });
+
+  it('is false when a visibility was added or removed', () => {
+    expect(isSameVisibilities(['Public'], ['Public', 'Project'])).toBe(false);
+    expect(isSameVisibilities(['Public', 'Project'], ['Public'])).toBe(false);
+    expect(isSameVisibilities(['Public'], ['Organization'])).toBe(false);
   });
 });

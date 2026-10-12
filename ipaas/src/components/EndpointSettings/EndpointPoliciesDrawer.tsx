@@ -16,25 +16,26 @@
  * under the License.
  */
 
-import { Alert, Box, Button, CircularProgress, Divider, Drawer, IconButton, MenuItem, Select, Stack, Tooltip, Typography } from '@wso2/oxygen-ui';
-import TextField from '../../common/TextField';
+import { Alert, Box, Button, CircularProgress, Divider, Drawer, IconButton, Stack, Tooltip, Typography } from '@wso2/oxygen-ui';
+import TextField from '../common/TextField';
 import { X } from '@wso2/oxygen-ui-icons-react';
 import { useEffect, useMemo, useRef, useState, type JSX } from 'react';
-import { useEndpointPolicies, useSetEndpointPolicies } from '../../../hooks/useConsumers';
-import type { EndpointOption } from '../../../types/consumers';
-import type { CorsConfig, RateLimitConfig } from '../../../types/policy';
-import { configToPolicy, policyToConfig, toRateLimitOperations } from '../../../utils/endpointPolicy';
-import { isRateLimitValid } from '../../../utils/policy';
-import { endpointLoadNotice, friendlyApiError } from '../../../utils/apiSecurity';
-import CorsSection from '../../Policies/CorsSection';
-import RateLimitingSection from '../../Policies/RateLimitingSection';
+import { useEndpointPolicies, useSetEndpointPolicies } from '../../hooks/useConsumers';
+import type { EndpointOption } from '../../types/consumers';
+import type { CorsConfig, RateLimitConfig } from '../../types/policy';
+import { configToPolicy, policyToConfig, toRateLimitOperations } from '../../utils/endpointPolicy';
+import { isRateLimitValid } from '../../utils/policy';
+import { endpointLoadNotice, friendlyApiError } from '../../utils/apiSecurity';
+import CorsSection from '../Policies/CorsSection';
+import RateLimitingSection from '../Policies/RateLimitingSection';
+import EndpointPicker from './EndpointPicker';
 import { useEndpointDrawer } from './useEndpointDrawer';
-import * as styles from './apiConsumption.styles';
+import * as styles from './endpointSettings.styles';
 
 /** The gateway has a request timeout, but platform-api does not expose it for the BFF to set. */
 const TIMEOUT_UNAVAILABLE = 'Endpoint timeout is not configurable from here yet';
 
-interface ApiSettingsDrawerProps {
+interface EndpointPoliciesDrawerProps {
   open: boolean;
   onClose: () => void;
   /** Component name — the BFF's `componentName` path segment. */
@@ -43,17 +44,17 @@ interface ApiSettingsDrawerProps {
   envName: string;
   /** Endpoints of this environment; the drawer configures one at a time. */
   endpoints: EndpointOption[];
-  /** Endpoint selected when the drawer opens. */
+  /** The endpoint to configure, already picked by the caller (e.g. on the env card). Omit it to let the user pick one. */
   activeEndpointName?: string;
 }
 
-/** Cloud-only "API Settings" drawer: CORS and rate limiting. Authentication lives in ApiSecurityDrawer. */
-export default function ApiSettingsDrawer({ open, onClose, componentName, envName, endpoints, activeEndpointName }: ApiSettingsDrawerProps): JSX.Element {
+/** Cloud-only "Configure Policies" drawer: CORS and rate limiting. Authentication lives in EndpointSecurityDrawer. */
+export default function EndpointPoliciesDrawer({ open, onClose, componentName, envName, endpoints, activeEndpointName }: EndpointPoliciesDrawerProps): JSX.Element {
   const [cors, setCors] = useState<CorsConfig | null>(null);
   const [rateLimit, setRateLimit] = useState<RateLimitConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const { selectedIdx, selectEndpoint, selectedEndpoint, endpointRef, syncKey } = useEndpointDrawer({ open, componentName, envName, endpoints, activeEndpointName });
+  const { selectedIdx, selectEndpoint, selectedEndpoint, canChoose, endpointRef, syncKey } = useEndpointDrawer({ open, componentName, envName, endpoints, activeEndpointName });
 
   const { data: policies, isLoading, error: loadError } = useEndpointPolicies(endpointRef, open);
   const setPolicies = useSetEndpointPolicies(endpointRef);
@@ -79,9 +80,9 @@ export default function ApiSettingsDrawer({ open, onClose, componentName, envNam
   }, [open, policies, syncKey]);
 
   const notice = endpointLoadNotice(loadError, {
-    notExposed: 'This endpoint isn’t exposed as an API yet. Set its visibility to Public and deploy, then come back to configure API settings.',
-    unavailable: 'API settings aren’t available in this environment.',
-    readFailed: 'Could not read the current API settings.',
+    notExposed: 'This endpoint isn’t exposed as an API yet. Set its visibility to Public and deploy, then come back to configure policies.',
+    unavailable: 'Policies aren’t available in this environment.',
+    readFailed: 'Could not read the current policies.',
   });
 
   const canApply = !!endpointRef && !!cors && !!rateLimit && isRateLimitValid(rateLimit) && !loadError && !isLoading && !saving;
@@ -93,7 +94,7 @@ export default function ApiSettingsDrawer({ open, onClose, componentName, envNam
       await setPolicies.mutateAsync(configToPolicy(cors, rateLimit));
       onClose();
     } catch (err) {
-      setError(friendlyApiError(err, 'Could not save the API settings.'));
+      setError(friendlyApiError(err, 'Could not save the policies.'));
     }
   };
 
@@ -107,7 +108,7 @@ export default function ApiSettingsDrawer({ open, onClose, componentName, envNam
       <Box sx={styles.drawerFrame}>
         <Box sx={styles.drawerHeader}>
           <Typography variant="subtitle1" fontWeight={600}>
-            API Settings
+            Configure Policies
           </Typography>
           <IconButton size="small" aria-label="close" onClick={handleCancel}>
             <X size={16} />
@@ -122,18 +123,7 @@ export default function ApiSettingsDrawer({ open, onClose, componentName, envNam
               {error && <Alert severity="error">{error}</Alert>}
               {notice && !error && <Alert severity={notice.severity}>{notice.text}</Alert>}
 
-              <Stack direction="row" alignItems="center" gap={2}>
-                <Typography variant="body2" fontWeight={500}>
-                  Endpoints:
-                </Typography>
-                <Select size="small" value={selectedIdx} onChange={(e) => selectEndpoint(Number(e.target.value))} disabled={endpoints.length <= 1} sx={styles.endpointSelect}>
-                  {endpoints.map((ep, i) => (
-                    <MenuItem key={ep.name} value={i}>
-                      {ep.displayName}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </Stack>
+              <EndpointPicker endpoint={selectedEndpoint} choice={canChoose ? { endpoints, selectedIdx, onSelect: selectEndpoint } : undefined} />
 
               {isLoading ? (
                 <Box sx={styles.centredRow}>
