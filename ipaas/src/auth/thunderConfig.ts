@@ -39,7 +39,11 @@ export function thunderConfig(): ThunderIDProviderProps {
     // tab signs in again through Thunder, whose own session usually makes that a redirect.
     // Each tab also refreshes its own tokens, so tabs never race on Thunder's rotating refresh token.
     storage: 'sessionStorage',
-    tokenLifecycle: { refreshToken: { autoRefresh: true } },
+    // signOut() revokes the access token at Thunder's revocation endpoint before it leaves for
+    // end-session. Thunder revokes the token's whole grant with it, refresh token included, so a
+    // token copied before sign-out cannot be refreshed even if the end-session redirect never lands.
+    // A failed revocation does not stop the sign-out.
+    tokenLifecycle: { refreshToken: { autoRefresh: true }, revokeToken: { revokeOnSignOut: true } },
     // A working prompt=none answer takes about a second. The SDK would wait 10s for an iframe that
     // never answers (framing blocked), so give up sooner and sign in interactively.
     session: { silentSignIn: { timeout: 3_000 } },

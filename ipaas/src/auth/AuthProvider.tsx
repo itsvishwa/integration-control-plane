@@ -232,7 +232,7 @@ function CloudSessionProvider({ children }: { children: ReactNode }): JSX.Elemen
     disconnect();
     localStorage.removeItem(ORG_HANDLE_KEY);
     sessionStorage.setItem(SKIP_SILENT_KEY, '1');
-    // Clears the local session, then leaves for Thunder's end-session endpoint.
+    // Revokes the tokens (thunderConfig), clears the local session, then leaves for Thunder's end-session endpoint.
     await signOut();
     // Callers don't navigate over the redirect.
     return new Promise<void>(() => {});

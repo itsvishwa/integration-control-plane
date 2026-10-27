@@ -22,7 +22,8 @@ Add to `index.ts` only when code outside needs it. ESLint rejects imports of the
 - Once signed in, it connects the session to `session.ts`, the one place code outside React gets tokens from. It also stores the org handle as `org_handle` in localStorage.
 - The SDK refreshes tokens itself. A 401 on an expired token ends the session.
 - `/signin` (`OIDCCallback`) only routes after sign-in: it forwards Cloud Editor results, then opens the saved deep link or the user's last project.
-- `logout()` clears the local session and leaves for Thunder's end-session endpoint. Thunder must list the console origin in the client's `postLogoutRedirectUris`.
+- `logout()` revokes the tokens at Thunder's revocation endpoint, clears the local session and leaves for Thunder's end-session endpoint, which ends the Thunder session. Revoking the access token also revokes its refresh token. Thunder must list the console origin in the client's `postLogoutRedirectUris` and in its CORS origins.
+- An access token copied before sign-out is still accepted until it expires (one hour) by any API that verifies it against Thunder's signing keys without asking Thunder. Only those APIs can close that gap.
 
 ## Rules
 

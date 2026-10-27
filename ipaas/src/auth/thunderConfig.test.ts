@@ -48,6 +48,11 @@ describe('thunderConfig', () => {
     expect(config.tokenLifecycle?.refreshToken?.autoRefresh).toBe(true);
   });
 
+  // Off by default in the SDK, which would leave a copied token usable after sign-out.
+  it('revokes the tokens on sign-out', () => {
+    expect(thunderConfig().tokenLifecycle?.revokeToken?.revokeOnSignOut).toBe(true);
+  });
+
   it('gives up on a silent sign-in after 3s, not the SDK default 10s', () => {
     expect(thunderConfig().session?.silentSignIn).toEqual({ timeout: 3_000 });
   });
