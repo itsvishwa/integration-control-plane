@@ -47,6 +47,7 @@ tests/e2e/
 - **Secrets.** Read them with `readSecret()` and type them with `fillSecret()`, never `fill()`. `fill()` records its value in the trace.
 - **Setup artifacts.** The setup projects record no trace, video or screenshot unless `E2E_SETUP_ARTIFACTS=1` is set, because a sign-in trace contains tokens.
 - **`.auth/` contents** are live credentials. Never commit them, print them or attach them to reports.
+- **Token mode borrows a login.** Its token is `monitoring-token-provider`'s own login, which the synthetic monitors share. A test must never let it be revoked at Thunder: the provider's pod cannot sign in again until it is replaced.
 
 ## Checks before you finish
 

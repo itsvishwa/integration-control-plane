@@ -1228,9 +1228,18 @@ test.describe('09 sign out @smoke', () => {
     await page.getByRole('button', { name: 'Account' }).click();
     await page.getByRole('menuitem', { name: 'Sign Out' }).click();
 
+    // Sign-out revokes the session's login at Thunder. In token mode that login is
+    // monitoring-token-provider's own, shared with the synthetic monitors, so the
+    // revocation is answered here and never reaches Thunder.
+    if (process.env.E2E_TOKEN_MODE) {
+      await page.route('**/oauth2/revoke', (route) => route.fulfill({ status: 200, headers: { 'access-control-allow-origin': '*' } }));
+    }
+    const revoke = page.waitForRequest((r) => r.method() === 'POST' && r.url().endsWith('/oauth2/revoke'));
+
     const dialog = page.getByRole('dialog');
     await expect(dialog, 'signing out did not ask for confirmation').toBeVisible({ timeout: 30_000 });
     await dialog.getByRole('button', { name: 'Sign Out' }).click();
+    await revoke;
 
     // Cloud has no in-app login page — /login hands off to Thunder's hosted Gate.
     await expect(page).toHaveURL(/\/gate\/signin/, { timeout: 60_000 });
